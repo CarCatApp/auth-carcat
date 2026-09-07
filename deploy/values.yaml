@@ -1,0 +1,44 @@
+# Shared defaults for auth-service (all envs). Override per-env in values-*.yaml
+nameOverride: auth-service
+replicaCount: 1
+
+image:
+  repository: azizjava91/auth-carland
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 9090
+
+# Secret auth-service-env holds passwords / token keys (not in git)
+existingEnvSecret: auth-service-env
+
+# Non-secret config (Spring env binding)
+env:
+  SERVER_PORT: "9090"
+  CARLAND_API_URL: "http://carland-service:9091"
+  CARLAND_SWAGGER_PUBLIC_SERVER_URL: "https://digital-innovation.agency/auth/server"
+
+# No spring-boot-actuator yet → TCP probes
+livenessProbe:
+  enabled: true
+  type: tcp
+  initialDelaySeconds: 45
+  periodSeconds: 15
+
+readinessProbe:
+  enabled: true
+  type: tcp
+  initialDelaySeconds: 20
+  periodSeconds: 5
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+serviceMonitor:
+  enabled: false

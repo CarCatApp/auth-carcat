@@ -1,0 +1,19 @@
+# DOKS preprod only — does not affect the production droplet
+replicaCount: 1
+
+nodeSelector:
+  carcat.io/env: preprod
+
+tolerations:
+  - key: carcat.io/env
+    operator: Equal
+    value: preprod
+    effect: NoSchedule
+
+# Non-secret pieces that differ by env (password stays in auth-service-env)
+env:
+  SERVER_PORT: "9090"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://private-carcat-pg-preprod-do-user-27979639-0.m.db.ondigitalocean.com:25060/authdatabase?sslmode=require"
+  SPRING_DATASOURCE_USERNAME: "auth"
+  CARLAND_API_URL: "http://carland-service:9091"
+  CARLAND_SWAGGER_PUBLIC_SERVER_URL: "https://digital-innovation.agency/auth/server"

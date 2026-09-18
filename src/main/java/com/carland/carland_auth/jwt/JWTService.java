@@ -34,12 +34,19 @@ public class JWTService {
 
 
     public String generateAccessToken(User user, Long expirationTime) {
+        boolean mustChange = user.getStatus() != null
+                && "INVITED".equalsIgnoreCase(user.getStatus());
+        return generateAccessToken(user, expirationTime, mustChange);
+    }
+
+    public String generateAccessToken(User user, Long expirationTime, boolean mustChangePassword) {
         return Jwts.builder()
                 .subject(user.getPhoneNumber())
                 .claim("userId", user.getId())
                 .claim("role", user.getRole())
                 .claim("name", user.getName())
                 .claim("surname", user.getSurname())
+                .claim("mustChangePassword", mustChangePassword)
                 .issuedAt(new Date())
                 .expiration(Date.from(Instant.now().plusSeconds(expirationTime)))
                 .signWith(getSignKey(accessTokenSecretKey))
@@ -210,5 +217,11 @@ public class JWTService {
 
     public String extractUserRoleFromAccessToken(String token) {
         return extractClaim(token.substring(7).trim(), claims -> claims.get("role", String.class), accessTokenSecretKey);
+    }
+
+    public Boolean extractMustChangePassword(String token) {
+        String raw = stripBearer(token);
+        Boolean value = extractClaim(raw, claims -> claims.get("mustChangePassword", Boolean.class), accessTokenSecretKey);
+        return Boolean.TRUE.equals(value);
     }
 }

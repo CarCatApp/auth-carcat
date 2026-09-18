@@ -43,7 +43,7 @@ public class SmsBalanceAlertService {
     @Value("${lsim.api.sender}")
     private String sender;
 
-    @Value("${lsim.balance-alert.phones:+994502021123,+994705757570,+994558774777,+994772196561,+994709957000}")
+    @Value("${lsim.balance-alert.phones}")
     private String alertPhonesCsv;
 
     @Value("${lsim.balance-alert.thresholds:1500,1270,1000,500}")

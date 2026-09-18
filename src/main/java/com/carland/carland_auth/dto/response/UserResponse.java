@@ -17,4 +17,5 @@ public class UserResponse {
     String surname;
     Long userId;
     String phoneNumber;
+    Boolean mustChangePassword;
 }

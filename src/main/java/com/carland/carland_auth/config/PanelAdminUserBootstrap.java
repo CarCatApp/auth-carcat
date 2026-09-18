@@ -6,6 +6,7 @@ import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
@@ -14,25 +15,38 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 
 /**
- * tr: Panel admin kullanıcısı (+994000000000 / PIN 2026 / ADMIN) yoksa auth DB'ye ekler.
- * en: Inserts the panel admin user (+994000000000 / PIN 2026 / ADMIN) when missing.
+ * tr: Panel admin kullanıcısı yoksa auth DB'ye ekler. Phone/PIN env'den gelir.
+ * en: Inserts the panel admin user when missing. Phone/PIN come from env.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class PanelAdminUserBootstrap implements ApplicationRunner {
 
-    public static final String PANEL_ADMIN_PHONE = "+994000000000";
-    public static final String PANEL_ADMIN_PIN = "2026";
-
     private final UserRepository userRepository;
     private final Argon2PasswordEncoder argon2PasswordEncoder;
 
+    @Value("${carland.admin.panel-phone}")
+    private String panelAdminPhone;
+
+    @Value("${carland.admin.legacy-panel-phone:+994000000000}")
+    private String legacyPanelAdminPhone;
+
+    @Value("${carland.admin.panel-pin}")
+    private String panelAdminPin;
+
     @Override
     public void run(ApplicationArguments args) {
-        User existing = userRepository.findByPhoneNumber(PANEL_ADMIN_PHONE);
+        User existing = userRepository.findByPhoneNumber(panelAdminPhone);
+        boolean dirty = false;
+        if (existing == null) {
+            existing = userRepository.findByPhoneNumber(legacyPanelAdminPhone);
+            if (existing != null) {
+                existing.setPhoneNumber(panelAdminPhone);
+                dirty = true;
+            }
+        }
         if (existing != null) {
-            boolean dirty = false;
             if (!UserRoles.ADMIN.name().equals(existing.getRole())) {
                 existing.setRole(UserRoles.ADMIN.name());
                 dirty = true;
@@ -42,18 +56,18 @@ public class PanelAdminUserBootstrap implements ApplicationRunner {
                 dirty = true;
             }
             if (existing.getPinHash() == null || existing.getPinHash().isBlank()) {
-                existing.setPinHash(argon2PasswordEncoder.encode(PANEL_ADMIN_PIN));
+                existing.setPinHash(argon2PasswordEncoder.encode(panelAdminPin));
                 dirty = true;
             }
             if (dirty) {
                 userRepository.save(existing);
-                log.info("Panel admin user updated: {}", PANEL_ADMIN_PHONE);
+                log.info("Panel admin user updated: {}", panelAdminPhone);
             }
             return;
         }
         userRepository.save(User.builder()
-                .phoneNumber(PANEL_ADMIN_PHONE)
-                .pinHash(argon2PasswordEncoder.encode(PANEL_ADMIN_PIN))
+                .phoneNumber(panelAdminPhone)
+                .pinHash(argon2PasswordEncoder.encode(panelAdminPin))
                 .role(UserRoles.ADMIN.name())
                 .status(UserStatus.ACTIVE.name())
                 .name("Panel")
@@ -61,6 +75,6 @@ public class PanelAdminUserBootstrap implements ApplicationRunner {
                 .createdAt(LocalDateTime.now())
                 .failedPinAttempts(0)
                 .build());
-        log.info("Panel admin user created: {} / PIN 2026", PANEL_ADMIN_PHONE);
+        log.info("Panel admin user created: {}", panelAdminPhone);
     }
 }

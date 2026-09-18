@@ -203,6 +203,16 @@ public enum EnumMessagesLangValues {
             "Əməliyyat üçün səlahiyyətiniz yoxdur!",
             "You dont have permission for operation!",
             "У вас нет прав для операции!"
+    ),
+    STAFF_PASSWORD_TOO_SHORT(
+            "Şifrə ən azı 8 simvol olmalıdır",
+            "Password must be at least 8 characters",
+            "Пароль должен быть не короче 8 символов"
+    ),
+    STAFF_CURRENT_PASSWORD_REQUIRED(
+            "Cari şifrə tələb olunur",
+            "Current password is required",
+            "Требуется текущий пароль"
     );
 
 

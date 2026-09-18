@@ -8,20 +8,25 @@ springdoc:
     custom-js: /swagger-custom.js
 
 carland:
+  internal-token: ${CARLAND_INTERNAL_TOKEN:}
   swagger:
     public-server-url: ${SWAGGER_PUBLIC_SERVER_URL:https://digital-innovation.agency/auth/server}
   issuer:
     key: "carland"
   api:
     url: "http://carland-service:9091"
+  admin:
+    panel-phone: ${ADMIN_PANEL_PHONE}
+    panel-pin: ${ADMIN_PANEL_PIN}
+    legacy-panel-phone: ${ADMIN_PANEL_LEGACY_PHONE:+994000000000}
 
 spring:
   application:
     name: carland_auth
   datasource:
-    url: jdbc:postgresql://localhost:5433/authdatabase
-    username: username
-    password: password
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/authdatabase}
+    username: ${SPRING_DATASOURCE_USERNAME:username}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -32,22 +37,22 @@ spring:
         show_sql: true
 msm:
   api:
-    url: http://api.msm.az
-    username: test_apii
-    apikey: 85NJkcZ7
-    sendername: AL&GO
+    url: ${MSM_API_URL:http://api.msm.az}
+    username: ${MSM_API_USERNAME}
+    apikey: ${MSM_API_KEY}
+    sendername: ${MSM_API_SENDER:AL&GO}
   response:
     success:
       message: errno=100
 lsim:
   api:
-    url: https://apps.lsim.az
-    login: user4car
-    password: VcC9sC%7T20!2e
-    sender: CarCat
+    url: ${LSIM_API_URL:https://apps.lsim.az}
+    login: ${LSIM_API_LOGIN}
+    password: ${LSIM_API_PASSWORD}
+    sender: ${LSIM_API_SENDER:CarCat}
   balance-alert:
-    thresholds: 1500,1270,1000,500
-    phones: +994502021123,+994705757570,+994558774777,+994772196561,+994709957000
+    thresholds: ${LSIM_BALANCE_ALERT_THRESHOLDS:1500,1270,1000,500}
+    phones: ${LSIM_BALANCE_ALERT_PHONES}
 
 otp:
   expiration-minutes: 3
@@ -73,16 +78,16 @@ pin:
 
 access:
   token:
-    secret-key: "7f4a9c63f339110c36111661b1a568b342a1e5ab675b67a09a2e4986a2a4224a"
+    secret-key: ${ACCESS_TOKEN_SECRET_KEY}
     expiration: 900 # 900 seconds 15 minutes
 
 
 authentication:
   token:
-    secret-key: "6598b1401213c9204763656f5e1d8d863bb117bf7d962a7d477e927298459701"
+    secret-key: ${AUTHENTICATION_TOKEN_SECRET_KEY}
     expiration: 360 # seconds 6 minutes
 
 refresh:
   token:
-    secret-key: "6598b1401213c9204763656f5e1d8d863bb117bf7d962a7d477e927298459722"
+    secret-key: ${REFRESH_TOKEN_SECRET_KEY}
     expiration: 31536000 # seconds = 1 year (365 days)

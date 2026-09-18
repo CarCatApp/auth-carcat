@@ -74,6 +74,8 @@ jobs:
           git tag ${{ env.NEW_VERSION }}
           git push origin ${{ env.NEW_VERSION }}
 
+      # App secrets are NOT GitHub Secrets — /root/carland.env on the server.
+      # GitHub only: DOCKER_USERNAME, DOCKER_PASSWORD, HOST, SSH_KEY.
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -81,5 +83,6 @@ jobs:
           username: root
           key: ${{ secrets.SSH_KEY }}
           script: |
-            docker-compose pull auth-service
-            docker-compose up -d --no-deps auth-service
+            cd /root
+            docker-compose --env-file /root/carland.env pull auth-service
+            docker-compose --env-file /root/carland.env up -d --no-deps auth-service

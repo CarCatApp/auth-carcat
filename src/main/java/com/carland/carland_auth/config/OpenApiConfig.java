@@ -88,6 +88,24 @@ public class OpenApiConfig {
     }
 
     @Bean
+    public GroupedOpenApi staffGroup() {
+        return GroupedOpenApi.builder()
+                .group("staff")
+                .displayName("1C. Auth — Staff")
+                .pathsToMatch("/api/v1/staff/**", "/api/v1/internal/staff/**")
+                .addOpenApiCustomizer(openApi -> openApi.getInfo()
+                        .title("1C. Auth — Staff")
+                        .description("""
+                                Booking partner/branch admin:
+                                - POST /api/v1/internal/staff/provision (X-Internal-Token)
+                                - POST /api/v1/internal/staff/disable (X-Internal-Token)
+                                - POST /api/v1/staff/login (phone + UUID/password + deviceId)
+                                - PUT /api/v1/staff/password (access JWT)
+                                """))
+                .build();
+    }
+
+    @Bean
     public OperationCustomizer headerDefaultsCustomizer() {
         return (operation, handlerMethod) -> {
             if (operation.getParameters() == null) {

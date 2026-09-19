@@ -41,8 +41,8 @@ public class StaffAuthController {
         return staffAuthService.login(request, lang(acceptLanguage));
     }
 
-    @PutMapping("/api/v1/staff/password")
-    public UserResponse changePassword(@RequestBody StaffPasswordChangeRequest request,
+    @PutMapping("/api/v1/staff/me/own-password")
+    public UserResponse setOwnPassword(@RequestBody StaffPasswordChangeRequest request,
                                        @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
         return staffAuthService.changePassword(request, lang(acceptLanguage));
     }

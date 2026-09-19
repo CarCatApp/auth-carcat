@@ -100,7 +100,7 @@ public class OpenApiConfig {
                                 - POST /api/v1/internal/staff/provision (X-Internal-Token)
                                 - POST /api/v1/internal/staff/disable (X-Internal-Token)
                                 - POST /api/v1/staff/login (phone + UUID/password + deviceId)
-                                - PUT /api/v1/staff/password (access JWT)
+                                - PUT /api/v1/staff/me/own-password (access JWT; replace invited password)
                                 """))
                 .build();
     }

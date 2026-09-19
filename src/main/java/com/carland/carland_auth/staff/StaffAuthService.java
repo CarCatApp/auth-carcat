@@ -9,6 +9,7 @@ import com.carland.carland_auth.enums.UserRoles;
 import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.MissingFieldException;
+import com.carland.carland_auth.exceptions.PinLockedException;
 import com.carland.carland_auth.exceptions.UsernameAlreadyExistException;
 import com.carland.carland_auth.exceptions.WrongPasswordException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
@@ -16,6 +17,7 @@ import com.carland.carland_auth.jwt.CarlandPrincipal;
 import com.carland.carland_auth.jwt.JWTService;
 import com.carland.carland_auth.repository.UserRepository;
 import com.carland.carland_auth.service.interfaces.RefreshTokenService;
+import com.carland.carland_auth.staff.dto.StaffAuditRequest;
 import com.carland.carland_auth.staff.dto.StaffDisableRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordChangeRequest;
 import com.carland.carland_auth.staff.dto.StaffProvisionRequest;
@@ -48,6 +50,7 @@ public class StaffAuthService {
     private final JWTService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final CarlandBookingFeign carlandBookingFeign;
+    private final StaffLoginAttemptService staffLoginAttemptService;
 
     @Value("${access.token.expiration}")
     private Long accessTokenExpiration;
@@ -127,20 +130,44 @@ public class StaffAuthService {
 
         User user = userRepository.findByPhoneNumber(phone);
         if (user == null || UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())
-                || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())) {
-            throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
-        }
-        if (!isStaffRole(user.getRole())) {
+                || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())
+                || !isStaffRole(user.getRole())) {
+            auditLogin(null, phone, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
         boolean invited = UserStatus.INVITED.name().equalsIgnoreCase(user.getStatus());
         boolean active = UserStatus.ACTIVE.name().equalsIgnoreCase(user.getStatus());
         if (!invited && !active) {
+            auditLogin(user, phone, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
+
+        staffLoginAttemptService.clearExpiredLock(user.getId());
+        user = userRepository.findById(user.getId()).orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+        if (user.getPinLockedUntil() != null && user.getPinLockedUntil().isAfter(now)) {
+            long remaining = Math.max(1, java.time.Duration.between(now, user.getPinLockedUntil()).getSeconds());
+            auditLogin(user, phone, false, "LOCKED");
+            throw new PinLockedException(
+                    EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
+                    user.getPinLockedUntil(),
+                    remaining);
+        }
+
         if (user.getPin() == null || user.getPin().isBlank() || !passwordEncoder.matches(password, user.getPin())) {
+            StaffLoginAttemptService.Result result = staffLoginAttemptService.recordWrongPassword(user.getId());
+            if (result.locked()) {
+                auditLogin(user, phone, false, "LOCKED");
+                throw new PinLockedException(
+                        EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
+                        result.lockedUntil(),
+                        result.remainingSeconds());
+            }
+            auditLogin(user, phone, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
+
+        staffLoginAttemptService.clearFailureState(user.getId());
 
         String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration, invited);
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(
@@ -148,6 +175,7 @@ public class StaffAuthService {
         refreshToken.setUser(user);
         user.getRefreshTokens().add(refreshToken);
         userRepository.save(user);
+        auditLogin(user, phone, true, "OK");
 
         return UserResponse.builder()
                 .accessToken(accessToken)
@@ -221,6 +249,25 @@ public class StaffAuthService {
             carlandBookingFeign.activateStaff(internalToken, userId);
         } catch (Exception ex) {
             log.warn("STAFF_ACTIVATE_FEIGN_FAIL userId={}", userId);
+        }
+    }
+
+    private void auditLogin(User user, String phone, boolean success, String detail) {
+        if (!StringUtils.hasText(internalToken)) {
+            return;
+        }
+        try {
+            carlandBookingFeign.auditStaff(internalToken, StaffAuditRequest.builder()
+                    .action("LOGIN")
+                    .actor(phone)
+                    .userId(user == null ? null : user.getId())
+                    .phoneNumber(phone)
+                    .role(user == null ? null : user.getRole())
+                    .detail(detail)
+                    .success(success)
+                    .build());
+        } catch (Exception ex) {
+            log.warn("STAFF_AUDIT_LOGIN_FAIL userId={}", user == null ? null : user.getId());
         }
     }
 

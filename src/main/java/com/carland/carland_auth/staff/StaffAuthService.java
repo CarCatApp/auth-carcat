@@ -124,9 +124,6 @@ public class StaffAuthService {
         if (phone == null || password == null) {
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
-        if (request.getDeviceId() == null || request.getDeviceId().isBlank()) {
-            throw new AuthApiException("INVALID_TOKEN", "deviceId is required.", HttpStatus.BAD_REQUEST);
-        }
 
         User user = userRepository.findByPhoneNumber(phone);
         if (user == null || UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())
@@ -170,8 +167,7 @@ public class StaffAuthService {
         staffLoginAttemptService.clearFailureState(user.getId());
 
         String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration, invited);
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(
-                user, request.getDeviceId(), request.getPlatform() == null ? "WEB" : request.getPlatform());
+        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
         refreshToken.setUser(user);
         user.getRefreshTokens().add(refreshToken);
         userRepository.save(user);

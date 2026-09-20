@@ -47,8 +47,9 @@ public class PanelAdminUserBootstrap implements ApplicationRunner {
             }
         }
         if (existing != null) {
-            if (!UserRoles.ADMIN.name().equals(existing.getRole())) {
-                existing.setRole(UserRoles.ADMIN.name());
+            if ("ADMIN".equalsIgnoreCase(existing.getRole())
+                    || "SUPER_ADMIN".equalsIgnoreCase(existing.getRole())) {
+                existing.setRole(UserRoles.USER.name());
                 dirty = true;
             }
             if (!UserStatus.ACTIVE.name().equalsIgnoreCase(existing.getStatus())) {
@@ -68,7 +69,7 @@ public class PanelAdminUserBootstrap implements ApplicationRunner {
         userRepository.save(User.builder()
                 .phoneNumber(panelAdminPhone)
                 .pinHash(argon2PasswordEncoder.encode(panelAdminPin))
-                .role(UserRoles.ADMIN.name())
+                .role(UserRoles.USER.name())
                 .status(UserStatus.ACTIVE.name())
                 .name("Panel")
                 .surname("Admin")

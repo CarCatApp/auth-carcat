@@ -1,18 +1,14 @@
 package com.carland.carland_auth.service.impl;
 
 
-import com.carland.carland_auth.dto.request.InviteRequest;
 import com.carland.carland_auth.dto.request.UserRequest;
-import com.carland.carland_auth.dto.response.InviteResponse;
 import com.carland.carland_auth.dto.response.AuthenticationResponse;
 import com.carland.carland_auth.dto.response.UserResponse;
 import com.carland.carland_auth.entity.RefreshToken;
 import com.carland.carland_auth.entity.User;
 import com.carland.carland_auth.enums.EnumMessagesLangValues;
-import com.carland.carland_auth.enums.UserRoles;
 import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.*;
-import com.carland.carland_auth.feign.CarlandFeign;
 import com.carland.carland_auth.jwt.JWTService;
 import com.carland.carland_auth.repository.RefreshTokenRepository;
 import com.carland.carland_auth.repository.UserRepository;
@@ -49,7 +45,6 @@ public class UserServiceImpl implements UserService {
     private final RefreshTokenService refreshTokenService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final OtpService otpService;
-    private final CarlandFeign carlandFeign;
     private final PinAttemptService pinAttemptService;
 
     @Transactional
@@ -264,59 +259,6 @@ public class UserServiceImpl implements UserService {
         return AuthenticationResponse.ofToken(
                 authenticationJwt,
                 EnumMessagesLangValues.OTP_SENT.getMessageByLang(acceptLanguage));
-    }
-
-    @Override
-    @Transactional
-    public InviteResponse inviteUser(Long inviterId, String inviterRole, InviteRequest inviteRequest,
-                                     String acceptLanguage) {
-        if (!(inviterRole.equals(UserRoles.BOSS.name()) || inviterRole.equals(UserRoles.SUPER_ADMIN.name()))) {
-            throw new InvalidStatusException(EnumMessagesLangValues.INVALID_ROLE_PERMISSION.getMessageByLang(acceptLanguage));
-        }
-        User inviterUser = userRepository.findByIdAndStatus(inviterId, UserStatus.ACTIVE.name());
-
-        if (inviterUser == null) {
-            throw new UserNotFoundException(EnumMessagesLangValues.USER_NOT_FOUND.getMessageByLang(acceptLanguage));
-        }
-
-        User existingUser = userRepository.findByPhoneNumber(inviteRequest.getPhoneNumber());
-        if (existingUser != null) {
-            throw new UsernameAlreadyExistException(EnumMessagesLangValues.USERNAME_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
-        }
-
-        String newUserRole = inviterUser.getRole().equals(UserRoles.BOSS.name())
-                ? UserRoles.SUPER_ADMIN.name()
-                : UserRoles.ADMIN.name();
-
-        String credential = inviteRequest.resolveCredential();
-        if (credential == null || credential.isBlank()) {
-            throw new MissingFieldException(EnumMessagesLangValues.MISSING_USER_FIELDS.getMessageByLang(acceptLanguage));
-        }
-
-        User newUser = User.builder()
-                .name(inviteRequest.getName())
-                .surname(inviteRequest.getSurname())
-                .pin(passwordEncoder.encode(credential))
-                .phoneNumber(inviteRequest.getPhoneNumber())
-                .createdAt(LocalDateTime.now())
-                .role(newUserRole)
-                .status(UserStatus.ACTIVE.name())
-                .build();
-        userRepository.save(newUser);
-
-        String token = jwtService.generateAccessToken(newUser, ACCESS_TOKEN_EXPIRATION);
-
-        UserResponse userResponse = carlandFeign.addUserDetails("Bearer " + token, newUser.getRole(),
-                newUser.getPhoneNumber(), newUser.getName(), newUser.getSurname(), newUser.getId().toString(),
-                "Asia/Baku", "az", inviterId);
-
-        if (userResponse == null || !userResponse.getMessage().equals(EnumMessagesLangValues.SUCCESS.getMessageByLang("az"))) {
-            throw new InvalidStatusException(EnumMessagesLangValues.CARLAND_SERVICE_ERROR.getMessageByLang(acceptLanguage));
-        }
-
-        return InviteResponse.builder()
-                .message(EnumMessagesLangValues.SUCCESS.getMessageByLang(acceptLanguage))
-                .build();
     }
 
     @Override

@@ -107,16 +107,6 @@ private final ObjectMapper objectMapper;
                 .build();
         return new ResponseEntity<>(responseException, HttpStatus.BAD_REQUEST);
     }
-    @ExceptionHandler(InviteException.class)
-    public ResponseEntity<ResponseException> handleInviteException(InviteException ex) {
-        ResponseException responseException=ResponseException.builder()
-                .error("Invite error")
-                .message(ex.getMessage())
-                .timeStamp(LocalDateTime.now())
-                .status(HttpStatus.BAD_REQUEST.value())
-                .build();
-        return new ResponseEntity<>(responseException, HttpStatus.BAD_REQUEST);
-    }
 
     @ExceptionHandler(UsernameAlreadyExistException.class)
     public ResponseEntity<ResponseException> handleUsernameAlreadyExistException(UsernameAlreadyExistException ex) {

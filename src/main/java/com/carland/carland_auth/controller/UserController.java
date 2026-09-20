@@ -1,10 +1,8 @@
 package com.carland.carland_auth.controller;
 
 
-import com.carland.carland_auth.dto.request.InviteRequest;
 import com.carland.carland_auth.dto.request.UserRequest;
 import com.carland.carland_auth.dto.response.AuthenticationResponse;
-import com.carland.carland_auth.dto.response.InviteResponse;
 import com.carland.carland_auth.dto.response.NameSurname;
 import com.carland.carland_auth.dto.response.UserListItem;
 import com.carland.carland_auth.dto.response.UserResponse;
@@ -127,24 +125,6 @@ public class UserController {
     public AuthenticationResponse updatePassword(@RequestBody UserRequest userRequest,
                                                  @RequestHeader("Accept-Language") String acceptLanguage) {
         return userService.updatePin(userRequest, acceptLanguage);
-    }
-
-    @PostMapping("/invite")
-    public InviteResponse inviteUser(@RequestBody InviteRequest inviteRequest,
-                                     @RequestHeader("Authorization") String accessToken,
-                                     @RequestHeader("Accept-Language") String acceptLanguage) {
-
-        if (accessToken == null || accessToken.isBlank()) {
-            throw new MissingFieldException(EnumMessagesLangValues.ACCESS_TOKEN_MISSING.getMessageByLang(acceptLanguage));
-        }
-
-        String cutToken = accessToken.substring(7);
-        if (!jwtService.isAccessTokenValid(cutToken)) {
-            throw new RuntimeException(EnumMessagesLangValues.ACCESS_TOKEN_MISSING.getMessageByLang(acceptLanguage));
-        }
-        String inviterRole = jwtService.extractUserRoleFromAccessToken(accessToken);
-        Long inviterId = jwtService.extractUserId(cutToken);
-        return userService.inviteUser(inviterId, inviterRole, inviteRequest, acceptLanguage);
     }
 
     @PutMapping("/delete")

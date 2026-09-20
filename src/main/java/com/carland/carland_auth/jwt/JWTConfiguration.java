@@ -50,7 +50,6 @@ public class JWTConfiguration {
                                 "/api/v1/staff/login",
                                 "/api/v1/internal/staff/provision",
                                 "/api/v1/internal/staff/disable",
-                                "/invite-ui/get",
                                 "/api/v1/users/getNameSurname",
                                 "/api/v1/users/list",
                                 "/swagger-ui/**",

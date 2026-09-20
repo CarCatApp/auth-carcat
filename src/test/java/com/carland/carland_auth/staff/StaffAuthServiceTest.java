@@ -96,7 +96,6 @@ class StaffAuthServiceTest {
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
                 .password("secret12")
-                .deviceId("partner-web")
                 .build();
         assertThrows(PinLockedException.class, () -> service.login(req, "az"));
     }
@@ -118,7 +117,6 @@ class StaffAuthServiceTest {
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
                 .password("wrongpass")
-                .deviceId("partner-web")
                 .build();
         assertThrows(PinLockedException.class, () -> service.login(req, "az"));
     }
@@ -140,7 +138,6 @@ class StaffAuthServiceTest {
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
                 .password("wrongpass")
-                .deviceId("partner-web")
                 .build();
         assertThrows(WrongPasswordException.class, () -> service.login(req, "az"));
     }

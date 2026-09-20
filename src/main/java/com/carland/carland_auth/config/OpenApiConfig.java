@@ -99,7 +99,7 @@ public class OpenApiConfig {
                                 Booking partner/branch admin:
                                 - POST /api/v1/internal/staff/provision (X-Internal-Token)
                                 - POST /api/v1/internal/staff/disable (X-Internal-Token)
-                                - POST /api/v1/staff/login (phone + UUID/password + deviceId)
+                                - POST /api/v1/staff/login (phone + UUID/password)
                                 - PUT /api/v1/staff/me/own-password (access JWT; replace invited password)
                                 """))
                 .build();

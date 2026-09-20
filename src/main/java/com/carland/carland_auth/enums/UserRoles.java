@@ -5,8 +5,6 @@ import lombok.Getter;
 @Getter
 
 public enum UserRoles {
-    SUPER_ADMIN,
-    ADMIN,
     USER,
     BOSS,
     PARTNER_ADMIN,

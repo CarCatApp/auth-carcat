@@ -75,10 +75,16 @@ public class StaffAuthService {
             throw new UsernameAlreadyExistException(
                     EnumMessagesLangValues.USERNAME_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
         }
+        String email = normalizeEmail(request.getEmail());
+        if (email != null && userRepository.findByEmailIgnoreCase(email) != null) {
+            throw new UsernameAlreadyExistException(
+                    EnumMessagesLangValues.EMAIL_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
+        }
 
         String oneTime = UUID.randomUUID().toString();
         User user = User.builder()
                 .phoneNumber(phone)
+                .email(email)
                 .name(blankToNull(request.getName()))
                 .surname(blankToNull(request.getSurname()))
                 .pin(passwordEncoder.encode(oneTime))
@@ -120,31 +126,35 @@ public class StaffAuthService {
             throw new HttpMessageConversionException(EnumMessagesLangValues.MISSING_BODY.getMessageByLang(acceptLanguage));
         }
         String phone = PhoneNumbers.normalize(request.getPhoneNumber());
+        String email = normalizeEmail(request.getEmail());
         String password = request.resolveCredential();
-        if (phone == null || password == null) {
+        if ((phone == null && email == null) || password == null) {
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
 
-        User user = userRepository.findByPhoneNumber(phone);
+        User user = phone != null
+                ? userRepository.findByPhoneNumber(phone)
+                : userRepository.findByEmailIgnoreCase(email);
         if (user == null || UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())
                 || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())
                 || !isStaffRole(user.getRole())) {
-            auditLogin(null, phone, false, "FAIL");
+            auditLogin(null, phone != null ? phone : email, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
         boolean invited = UserStatus.INVITED.name().equalsIgnoreCase(user.getStatus());
         boolean active = UserStatus.ACTIVE.name().equalsIgnoreCase(user.getStatus());
         if (!invited && !active) {
-            auditLogin(user, phone, false, "FAIL");
+            auditLogin(user, user.getPhoneNumber(), false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
 
         staffLoginAttemptService.clearExpiredLock(user.getId());
         user = userRepository.findById(user.getId()).orElseThrow();
+        String auditId = user.getPhoneNumber();
         LocalDateTime now = LocalDateTime.now();
         if (user.getPinLockedUntil() != null && user.getPinLockedUntil().isAfter(now)) {
             long remaining = Math.max(1, java.time.Duration.between(now, user.getPinLockedUntil()).getSeconds());
-            auditLogin(user, phone, false, "LOCKED");
+            auditLogin(user, auditId, false, "LOCKED");
             throw new PinLockedException(
                     EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
                     user.getPinLockedUntil(),
@@ -154,13 +164,13 @@ public class StaffAuthService {
         if (user.getPin() == null || user.getPin().isBlank() || !passwordEncoder.matches(password, user.getPin())) {
             StaffLoginAttemptService.Result result = staffLoginAttemptService.recordWrongPassword(user.getId());
             if (result.locked()) {
-                auditLogin(user, phone, false, "LOCKED");
+                auditLogin(user, auditId, false, "LOCKED");
                 throw new PinLockedException(
                         EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
                         result.lockedUntil(),
                         result.remainingSeconds());
             }
-            auditLogin(user, phone, false, "FAIL");
+            auditLogin(user, auditId, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
 
@@ -171,7 +181,7 @@ public class StaffAuthService {
         refreshToken.setUser(user);
         user.getRefreshTokens().add(refreshToken);
         userRepository.save(user);
-        auditLogin(user, phone, true, "OK");
+        auditLogin(user, auditId, true, "OK");
 
         return UserResponse.builder()
                 .accessToken(accessToken)
@@ -277,5 +287,12 @@ public class StaffAuthService {
             return null;
         }
         return value.trim();
+    }
+
+    static String normalizeEmail(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return raw.trim().toLowerCase();
     }
 }

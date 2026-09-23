@@ -105,6 +105,23 @@ public class SMSServiceImpl implements SMSService {
         smsBalanceAlertService.checkAndAlertAfterOtpSend();
     }
 
+    @Override
+    public void sendTextToPhone(String phoneNumber, String message) {
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            throw new MissingFieldException("Phone number boşdur");
+        }
+        if (message == null || message.isBlank()) {
+            throw new MissingFieldException("SMS mətn boşdur");
+        }
+        String number = phoneNumber.startsWith("+") ? phoneNumber.substring(1) : phoneNumber;
+        String passMd5 = Md5Util.md5(password);
+        String raw = passMd5 + login + message + number + sender;
+        String key = Md5Util.md5(raw);
+        String response = lsimFeign.sendSms(login, number, message, sender, key, true);
+        log.info("LSIM response (staff-text): {}", response);
+        smsBalanceAlertService.checkAndAlertAfterOtpSend();
+    }
+
     private static String otpMessage(String acceptLanguage, String code) {
         String lang = acceptLanguage == null ? "az" : acceptLanguage.toLowerCase();
         if (lang.startsWith("ru")) {

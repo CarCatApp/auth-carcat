@@ -92,6 +92,27 @@ public class JWTService {
                 .compact();
     }
 
+    public String generateStaffResetToken(User user, Long expirationTime) {
+        return Jwts.builder()
+                .claim("userId", user.getId())
+                .claim("phoneNumber", user.getPhoneNumber())
+                .claim("purpose", "STAFF_PASSWORD_RESET")
+                .claim("type", "AUTH_FLOW")
+                .subject("staff-password-reset")
+                .issuedAt(new Date())
+                .expiration(Date.from(Instant.now().plusSeconds(expirationTime)))
+                .signWith(getSignKey(authenticationTokenSecretKey))
+                .compact();
+    }
+
+    public void assertStaffResetToken(String token) {
+        assertPhoneAuthToken(token);
+        String purpose = extractPurposeFromAuthToken(token);
+        if (!"STAFF_PASSWORD_RESET".equalsIgnoreCase(purpose)) {
+            throw new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED);
+        }
+    }
+
     public String extractPhoneFromAuthToken(String token) {
         return extractClaim(stripBearer(token), claims -> claims.get("phoneNumber", String.class), authenticationTokenSecretKey);
     }
@@ -170,7 +191,13 @@ public class JWTService {
 
 
     public Long extractUserIdFromAuthenticationToken(String token) {
-        return extractClaim(stripBearer(token), claims -> claims.get("userId", Long.class), authenticationTokenSecretKey);
+        return extractClaim(stripBearer(token), claims -> {
+            Object value = claims.get("userId");
+            if (value instanceof Number number) {
+                return number.longValue();
+            }
+            return null;
+        }, authenticationTokenSecretKey);
     }
 
 

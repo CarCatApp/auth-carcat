@@ -5,7 +5,12 @@ import com.carland.carland_auth.dto.response.UserResponse;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.security.InternalTokenValidator;
 import com.carland.carland_auth.staff.dto.StaffDisableRequest;
+import com.carland.carland_auth.staff.dto.StaffNotifySmsRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordChangeRequest;
+import com.carland.carland_auth.staff.dto.StaffPasswordForgotRequest;
+import com.carland.carland_auth.staff.dto.StaffPasswordResetRequest;
+import com.carland.carland_auth.staff.dto.StaffPasswordVerifyRequest;
+import com.carland.carland_auth.staff.dto.StaffPasswordVerifyResponse;
 import com.carland.carland_auth.staff.dto.StaffProvisionRequest;
 import com.carland.carland_auth.staff.dto.StaffProvisionResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 public class StaffAuthController {
 
     private final StaffAuthService staffAuthService;
+    private final StaffPasswordResetService staffPasswordResetService;
     private final InternalTokenValidator internalTokenValidator;
 
     @PostMapping("/api/v1/internal/staff/provision")
@@ -35,6 +41,15 @@ public class StaffAuthController {
         staffAuthService.disable(request);
     }
 
+    @PostMapping("/api/v1/internal/staff/notify-sms")
+    public void notifySms(@RequestBody StaffNotifySmsRequest request,
+                          HttpServletRequest httpRequest) {
+        assertInternalToken(httpRequest);
+        staffPasswordResetService.notifySms(
+                request == null ? null : request.getPhoneNumber(),
+                request == null ? null : request.getText());
+    }
+
     @PostMapping("/api/v1/staff/login")
     public UserResponse login(@RequestBody UserRequest request,
                               @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
@@ -45,6 +60,24 @@ public class StaffAuthController {
     public UserResponse setOwnPassword(@RequestBody StaffPasswordChangeRequest request,
                                        @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
         return staffAuthService.changePassword(request, lang(acceptLanguage));
+    }
+
+    @PostMapping("/api/v1/staff/password/forgot")
+    public UserResponse forgotPassword(@RequestBody StaffPasswordForgotRequest request,
+                                       @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
+        return staffPasswordResetService.forgot(request, lang(acceptLanguage));
+    }
+
+    @PostMapping("/api/v1/staff/password/verify-otp")
+    public StaffPasswordVerifyResponse verifyOtp(@RequestBody StaffPasswordVerifyRequest request,
+                                                 @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
+        return staffPasswordResetService.verify(request, lang(acceptLanguage));
+    }
+
+    @PostMapping("/api/v1/staff/password/reset")
+    public UserResponse resetPassword(@RequestBody StaffPasswordResetRequest request,
+                                      @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
+        return staffPasswordResetService.reset(request, lang(acceptLanguage));
     }
 
     private void assertInternalToken(HttpServletRequest request) {

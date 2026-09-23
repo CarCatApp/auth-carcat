@@ -122,6 +122,33 @@ class StaffAuthServiceTest {
     }
 
     @Test
+    void loginByEmail() {
+        User user = User.builder()
+                .id(7L)
+                .phoneNumber("+994709957000")
+                .email("staff@example.com")
+                .role(UserRoles.BRANCH_ADMIN.name())
+                .status(UserStatus.ACTIVE.name())
+                .pin("hash")
+                .refreshTokens(new java.util.ArrayList<>())
+                .build();
+        when(userRepository.findByEmailIgnoreCase("staff@example.com")).thenReturn(user);
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("secret12", "hash")).thenReturn(true);
+        when(jwtService.generateAccessToken(user, 900L, false)).thenReturn("tok");
+        when(refreshTokenService.createRefreshToken(user)).thenReturn(
+                com.carland.carland_auth.entity.RefreshToken.builder().token("r").build());
+        when(userRepository.save(user)).thenReturn(user);
+        UserRequest req = UserRequest.builder()
+                .email("staff@example.com")
+                .password("secret12")
+                .build();
+        var out = service.login(req, "az");
+        assertEquals("tok", out.getAccessToken());
+        assertEquals("+994709957000", out.getPhoneNumber());
+    }
+
+    @Test
     void loginWrongPasswordWithoutLock() {
         User user = User.builder()
                 .id(7L)

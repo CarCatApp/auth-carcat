@@ -9,10 +9,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class StaffProvisionRequest {
-    String phoneNumber;
-    String role;
-    String name;
-    String surname;
-    String email;
+public class StaffPasswordResetRequest {
+    String resetToken;
+    String newPassword;
 }

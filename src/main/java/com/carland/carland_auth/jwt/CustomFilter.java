@@ -35,8 +35,12 @@ public class CustomFilter extends OncePerRequestFilter {
             "/api/v1/newUsers/otp/verify",
             "/api/v1/newUsers/setPinCode",
             "/api/v1/staff/login",
+            "/api/v1/staff/password/forgot",
+            "/api/v1/staff/password/verify-otp",
+            "/api/v1/staff/password/reset",
             "/api/v1/internal/staff/provision",
             "/api/v1/internal/staff/disable",
+            "/api/v1/internal/staff/notify-sms",
             "/api/v1/users/getNameSurname",
             "/api/v1/users/list"
     );

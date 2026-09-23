@@ -15,6 +15,8 @@ public class UserRequest {
 
     String phoneNumber;
 
+    String email;
+
     @JsonAlias({"pin", "pinCode"})
     String password;
 

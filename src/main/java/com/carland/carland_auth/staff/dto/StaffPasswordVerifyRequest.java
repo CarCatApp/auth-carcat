@@ -9,10 +9,8 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class StaffProvisionRequest {
+public class StaffPasswordVerifyRequest {
     String phoneNumber;
-    String role;
-    String name;
-    String surname;
     String email;
+    String otp;
 }

@@ -25,6 +25,9 @@ public class User {
     @Column(nullable = false, unique = true)
     String phoneNumber;
 
+    @Column(unique = true, length = 128)
+    String email;
+
     /**
      * Legacy BCrypt password hash (column password).
      * Nullable for NewUsers-only accounts. Drop this column after full PIN migration.

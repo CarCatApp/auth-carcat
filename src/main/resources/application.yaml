@@ -81,6 +81,8 @@ staff:
     attempt-window-minutes: ${STAFF_LOGIN_ATTEMPT_WINDOW_MINUTES:10}
     lock-duration-minutes: ${STAFF_LOGIN_LOCK_DURATION_MINUTES:5}
 
+brevo:
+  api-key: ${BREVO_API_KEY:}
 
 access:
   token:

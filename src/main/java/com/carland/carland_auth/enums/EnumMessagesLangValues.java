@@ -213,6 +213,11 @@ public enum EnumMessagesLangValues {
             "Cari şifrə tələb olunur",
             "Current password is required",
             "Требуется текущий пароль"
+    ),
+    EMAIL_ALREADY_EXISTS(
+            "Bu email ilə artıq qeydiyyat mövcuddur",
+            "An account with this email already exists",
+            "Аккаунт с этим email уже существует"
     );
 
 

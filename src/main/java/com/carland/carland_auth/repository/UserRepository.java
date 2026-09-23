@@ -21,6 +21,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
     User findByPhoneNumber(String phoneNumber);
     User findByPhoneNumberAndStatus(String phoneNumber, String  status);
 
+    User findByEmailIgnoreCase(String email);
+
     @Query("SELECT u FROM User u JOIN u.refreshTokens rt WHERE rt.id = :refreshTokenId")
     User findByRefreshTokenId(@Param("refreshTokenId") Long refreshTokenId);
 

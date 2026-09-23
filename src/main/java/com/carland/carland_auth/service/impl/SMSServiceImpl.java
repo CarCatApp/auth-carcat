@@ -65,24 +65,8 @@ public class SMSServiceImpl implements SMSService {
         }
 
         String message = otpMessage(acceptLanguage, otp.getCode());
-
-        String passMd5 = Md5Util.md5(password);
-        String raw = passMd5 + login + message + number + sender;
-        String key = Md5Util.md5(raw);
-
         log.info("OTP: {}", otp.getCode());
-
-        String response = lsimFeign.sendSms(
-                login,
-                number,
-                message,
-                sender,
-                key,
-                true
-        );
-
-        log.info("LSIM response: {}", response);
-        smsBalanceAlertService.checkAndAlertAfterOtpSend();
+        dispatch(number, message);
     }
 
     @Override
@@ -94,15 +78,7 @@ public class SMSServiceImpl implements SMSService {
             throw new MissingFieldException("OTP boşdur");
         }
         String number = phoneNumber.startsWith("+") ? phoneNumber.substring(1) : phoneNumber;
-        String message = otpMessage(acceptLanguage, otpCode);
-
-        String passMd5 = Md5Util.md5(password);
-        String raw = passMd5 + login + message + number + sender;
-        String key = Md5Util.md5(raw);
-
-        String response = lsimFeign.sendSms(login, number, message, sender, key, true);
-        log.info("LSIM response (newUsers): {}", response);
-        smsBalanceAlertService.checkAndAlertAfterOtpSend();
+        dispatch(number, otpMessage(acceptLanguage, otpCode));
     }
 
     @Override
@@ -111,23 +87,37 @@ public class SMSServiceImpl implements SMSService {
             throw new MissingFieldException("Phone number boşdur");
         }
         if (message == null || message.isBlank()) {
-            throw new MissingFieldException("SMS mətn boşdur");
+            throw new MissingFieldException("SMS text is empty");
         }
         String number = phoneNumber.startsWith("+") ? phoneNumber.substring(1) : phoneNumber;
+        dispatch(number, message);
+    }
+
+    private void dispatch(String number, String message) {
+        boolean unicode = needsUnicode(message);
         String passMd5 = Md5Util.md5(password);
         String raw = passMd5 + login + message + number + sender;
         String key = Md5Util.md5(raw);
-        String response = lsimFeign.sendSms(login, number, message, sender, key, true);
-        log.info("LSIM response (staff-text): {}", response);
+        String response = lsimFeign.sendSms(login, number, message, sender, key, unicode);
+        log.info("LSIM response: {}", response);
         smsBalanceAlertService.checkAndAlertAfterOtpSend();
     }
 
-    private static String otpMessage(String acceptLanguage, String code) {
-        String lang = acceptLanguage == null ? "az" : acceptLanguage.toLowerCase();
-        if (lang.startsWith("ru")) {
-            return "CarCat код подтверждения: " + code;
+    /** tr: ə/ü vs. GSM disi karakter = unicode=true = 2x LSIM. ASCII OTP 1 SMS. */
+    static boolean needsUnicode(String message) {
+        if (message == null) {
+            return false;
         }
-        if (lang.startsWith("en")) {
+        for (int i = 0; i < message.length(); i++) {
+            if (message.charAt(i) > 127) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String otpMessage(String acceptLanguage, String code) {
+        if (acceptLanguage != null && acceptLanguage.toLowerCase().startsWith("en")) {
             return "Your CarCat verification code: " + code;
         }
         return "CarCat otp kodunuz: " + code;

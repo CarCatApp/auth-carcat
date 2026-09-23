@@ -61,6 +61,7 @@ class StaffPasswordResetServiceTest {
                 .build(), "az");
         assertNotNull(out.getMessage());
         verify(smsService, never()).sendOtpToPhone(any(), any(), any());
+        verify(smsService, never()).sendSms(any(), any());
     }
 
     @Test
@@ -80,7 +81,15 @@ class StaffPasswordResetServiceTest {
                 .channel("SMS")
                 .build(), "az");
 
-        verify(smsService).sendOtpToPhone(eq("+994778844221"), any(), eq("az"));
+        verify(smsService).sendOtpToPhone(eq("+994709957000"), any(), eq("az"));
+        verify(smsService, never()).sendSms(any(), any());
         verify(staffMailSender, never()).sendHtml(any(), any(), any());
+    }
+
+    @Test
+    void notifySmsSendsAsciiTextAsIs() {
+        service.notifySms("+994778844221", "Tek istifadelik sifreniz: 'uuid-here'");
+        verify(smsService).sendTextToPhone(eq("+994709957000"),
+                eq("Tek istifadelik sifreniz: 'uuid-here'"));
     }
 }

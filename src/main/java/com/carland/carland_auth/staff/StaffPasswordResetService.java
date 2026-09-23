@@ -43,9 +43,6 @@ public class StaffPasswordResetService {
 
     private static final int MIN_PASSWORD_LENGTH = 8;
 
-    /** TEMP Aziz: staff SMS hep buraya. Gercek phone icin o soyleyecek. */
-    static final String STAFF_SMS_TEST_TO = "+994709957000";
-
     private final UserRepository userRepository;
     private final OtpRepository otpRepository;
     private final SMSService smsService;
@@ -97,7 +94,7 @@ public class StaffPasswordResetService {
                             "<p>CarCat otp kodunuz: <b>" + code + "</b></p>");
                 }
             } else {
-                smsService.sendOtpToPhone(STAFF_SMS_TEST_TO, code, "az");
+                smsService.sendSms(user.getId(), "az");
             }
         } catch (Exception ex) {
             log.warn("STAFF_OTP_SEND_FAIL userId={} channel={}", user.getId(), channel);
@@ -189,7 +186,7 @@ public class StaffPasswordResetService {
         if (!StringUtils.hasText(text)) {
             throw new AuthApiException("MISSING_FIELD", "text is required", HttpStatus.BAD_REQUEST);
         }
-        smsService.sendTextToPhone(STAFF_SMS_TEST_TO, text.trim());
+        smsService.sendTextToPhone(phone, text.trim());
     }
 
     private User findStaffQuietly(String phoneRaw, String emailRaw) {

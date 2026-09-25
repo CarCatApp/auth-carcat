@@ -2,7 +2,9 @@ package com.carland.carland_auth.staff;
 
 import com.carland.carland_auth.enums.UserRoles;
 import com.carland.carland_auth.enums.UserStatus;
+import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.PinLockedException;
+import com.carland.carland_auth.exceptions.UserNotFoundException;
 import com.carland.carland_auth.exceptions.UsernameAlreadyExistException;
 import com.carland.carland_auth.exceptions.WrongPasswordException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
@@ -166,6 +168,80 @@ class StaffAuthServiceTest {
                 .phoneNumber("+994709957000")
                 .password("wrongpass")
                 .build();
-        assertThrows(WrongPasswordException.class, () -> service.login(req, "az"));
+        WrongPasswordException ex = assertThrows(WrongPasswordException.class, () -> service.login(req, "az"));
+        assertEquals("İstifadəçi məlumatı və ya şifrə yanlışdır", ex.getMessage());
+    }
+
+    @Test
+    void loginUnknownPhoneSaysUserNotFound() {
+        when(userRepository.findByPhoneNumber("+994500000001")).thenReturn(null);
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("+994500000001")
+                .password("20262026")
+                .build();
+        UserNotFoundException ex = assertThrows(UserNotFoundException.class, () -> service.login(req, "az"));
+        assertEquals("İstifadəçi tapılmadı", ex.getMessage());
+    }
+
+    @Test
+    void loginUnknownEmailSaysUserNotFound() {
+        when(userRepository.findByEmailIgnoreCase("ghost@example.com")).thenReturn(null);
+        UserRequest req = UserRequest.builder()
+                .email("ghost@example.com")
+                .password("20262026")
+                .build();
+        UserNotFoundException ex = assertThrows(UserNotFoundException.class, () -> service.login(req, "az"));
+        assertEquals("İstifadəçi tapılmadı", ex.getMessage());
+    }
+
+    @Test
+    void loginOwnerPhoneIsUserNotFoundNotPin() {
+        User owner = User.builder()
+                .id(9L)
+                .phoneNumber("+994709957000")
+                .role(UserRoles.USER.name())
+                .status(UserStatus.ACTIVE.name())
+                .pin("hash")
+                .build();
+        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(owner);
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("+994709957000")
+                .password("20262026")
+                .build();
+        UserNotFoundException ex = assertThrows(UserNotFoundException.class, () -> service.login(req, "az"));
+        assertEquals("İstifadəçi tapılmadı", ex.getMessage());
+    }
+
+    @Test
+    void loginRejectsPhoneWithoutPlus994() {
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("0709957840")
+                .password("20262026")
+                .build();
+        AuthApiException ex = assertThrows(AuthApiException.class, () -> service.login(req, "az"));
+        assertEquals("INVALID_PHONE", ex.getError());
+        assertEquals("Telefon nömrəsi +994 ilə başlamalıdır", ex.getMessage());
+    }
+
+    @Test
+    void loginRejectsUnknownOperator() {
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("+994129957000")
+                .password("20262026")
+                .build();
+        AuthApiException ex = assertThrows(AuthApiException.class, () -> service.login(req, "az"));
+        assertEquals("UNKNOWN_OPERATOR", ex.getError());
+        assertEquals("Naməlum mobil operator", ex.getMessage());
+    }
+
+    @Test
+    void loginRejectsShortPassword() {
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("+994709957000")
+                .password("1234567")
+                .build();
+        AuthApiException ex = assertThrows(AuthApiException.class, () -> service.login(req, "az"));
+        assertEquals("WEAK_PASSWORD", ex.getError());
+        assertEquals("Zəif şifrə. Minimum 8 simvol istifadə edin", ex.getMessage());
     }
 }

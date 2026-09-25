@@ -70,7 +70,7 @@ public class StaffPasswordResetService {
             throw new HttpMessageConversionException(EnumMessagesLangValues.MISSING_BODY.getMessageByLang(acceptLanguage));
         }
         String channel = normalizeChannel(request.getChannel());
-        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail());
+        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
         if (user == null) {
             return UserResponse.builder()
                     .message(EnumMessagesLangValues.OTP_SENT.getMessageByLang(acceptLanguage))
@@ -109,7 +109,7 @@ public class StaffPasswordResetService {
         if (request == null || request.getOtp() == null || request.getOtp().isBlank()) {
             throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
         }
-        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail());
+        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
         if (user == null) {
             throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
         }
@@ -189,8 +189,8 @@ public class StaffPasswordResetService {
         smsService.sendTextToPhone(phone, text.trim());
     }
 
-    private User findStaffQuietly(String phoneRaw, String emailRaw) {
-        String phone = PhoneNumbers.normalize(phoneRaw);
+    private User findStaffQuietly(String phoneRaw, String emailRaw, String lang) {
+        String phone = StaffPhones.requireLoginPhone(phoneRaw, lang);
         String email = StaffAuthService.normalizeEmail(emailRaw);
         User user = phone != null
                 ? userRepository.findByPhoneNumber(phone)

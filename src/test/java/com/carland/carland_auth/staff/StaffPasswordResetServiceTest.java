@@ -77,7 +77,7 @@ class StaffPasswordResetServiceTest {
         when(otpRepository.save(any(Otp.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.forgot(StaffPasswordForgotRequest.builder()
-                .phoneNumber("0778844221")
+                .phoneNumber("+994778844221")
                 .channel("SMS")
                 .build(), "az");
 

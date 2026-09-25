@@ -10,6 +10,7 @@ import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.MissingFieldException;
 import com.carland.carland_auth.exceptions.PinLockedException;
+import com.carland.carland_auth.exceptions.UserNotFoundException;
 import com.carland.carland_auth.exceptions.UsernameAlreadyExistException;
 import com.carland.carland_auth.exceptions.WrongPasswordException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
@@ -67,6 +68,7 @@ public class StaffAuthService {
         if (phone == null) {
             throw new MissingFieldException(EnumMessagesLangValues.MISSING_PHONE_NUMBER.getMessageByLang(acceptLanguage));
         }
+        StaffPhones.assertAllowedOperator(phone, acceptLanguage);
         String role = request.getRole() == null ? "" : request.getRole().trim().toUpperCase();
         if (!UserRoles.PARTNER_ADMIN.name().equals(role) && !UserRoles.BRANCH_ADMIN.name().equals(role)) {
             throw new AuthApiException("INVALID_ROLE", "role must be PARTNER_ADMIN or BRANCH_ADMIN", HttpStatus.BAD_REQUEST);
@@ -125,11 +127,16 @@ public class StaffAuthService {
         if (request == null) {
             throw new HttpMessageConversionException(EnumMessagesLangValues.MISSING_BODY.getMessageByLang(acceptLanguage));
         }
-        String phone = PhoneNumbers.normalize(request.getPhoneNumber());
+        String phone = StaffPhones.requireLoginPhone(request.getPhoneNumber(), acceptLanguage);
         String email = normalizeEmail(request.getEmail());
         String password = request.resolveCredential();
+        if (password != null && password.length() < MIN_PASSWORD_LENGTH) {
+            throw new AuthApiException("WEAK_PASSWORD",
+                    EnumMessagesLangValues.STAFF_PASSWORD_TOO_SHORT.getMessageByLang(acceptLanguage),
+                    HttpStatus.BAD_REQUEST);
+        }
         if ((phone == null && email == null) || password == null) {
-            throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
+            throw new MissingFieldException(EnumMessagesLangValues.STAFF_LOGIN_MISSING.getMessageByLang(acceptLanguage));
         }
 
         User user = phone != null
@@ -139,13 +146,13 @@ public class StaffAuthService {
                 || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())
                 || !isStaffRole(user.getRole())) {
             auditLogin(null, phone != null ? phone : email, false, "FAIL");
-            throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
+            throw new UserNotFoundException(EnumMessagesLangValues.STAFF_USER_NOT_FOUND.getMessageByLang(acceptLanguage));
         }
         boolean invited = UserStatus.INVITED.name().equalsIgnoreCase(user.getStatus());
         boolean active = UserStatus.ACTIVE.name().equalsIgnoreCase(user.getStatus());
         if (!invited && !active) {
             auditLogin(user, user.getPhoneNumber(), false, "FAIL");
-            throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
+            throw new UserNotFoundException(EnumMessagesLangValues.STAFF_USER_NOT_FOUND.getMessageByLang(acceptLanguage));
         }
 
         staffLoginAttemptService.clearExpiredLock(user.getId());
@@ -171,7 +178,7 @@ public class StaffAuthService {
                         result.remainingSeconds());
             }
             auditLogin(user, auditId, false, "FAIL");
-            throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
+            throw new WrongPasswordException(EnumMessagesLangValues.STAFF_WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
 
         staffLoginAttemptService.clearFailureState(user.getId());
@@ -224,7 +231,7 @@ public class StaffAuthService {
                         EnumMessagesLangValues.STAFF_CURRENT_PASSWORD_REQUIRED.getMessageByLang(acceptLanguage));
             }
             if (user.getPin() == null || !passwordEncoder.matches(request.getCurrentPassword(), user.getPin())) {
-                throw new WrongPasswordException(EnumMessagesLangValues.WRONG_PASSWORD.getMessageByLang(acceptLanguage));
+                throw new WrongPasswordException(EnumMessagesLangValues.STAFF_WRONG_PASSWORD.getMessageByLang(acceptLanguage));
             }
         }
 

@@ -205,9 +205,9 @@ public enum EnumMessagesLangValues {
             "У вас нет прав для операции!"
     ),
     STAFF_PASSWORD_TOO_SHORT(
-            "Şifrə ən azı 8 simvol olmalıdır",
-            "Password must be at least 8 characters",
-            "Пароль должен быть не короче 8 символов"
+            "Zəif şifrə. Minimum 8 simvol istifadə edin",
+            "Weak password. Use at least 8 characters",
+            "Слабый пароль. Используйте минимум 8 символов"
     ),
     STAFF_CURRENT_PASSWORD_REQUIRED(
             "Cari şifrə tələb olunur",
@@ -218,6 +218,36 @@ public enum EnumMessagesLangValues {
             "Bu email ilə artıq qeydiyyat mövcuddur",
             "An account with this email already exists",
             "Аккаунт с этим email уже существует"
+    ),
+    STAFF_USER_NOT_FOUND(
+            "İstifadəçi tapılmadı",
+            "User not found",
+            "Пользователь не найден"
+    ),
+    STAFF_WRONG_PASSWORD(
+            "İstifadəçi məlumatı və ya şifrə yanlışdır",
+            "User information or password is incorrect",
+            "Данные пользователя или пароль неверны"
+    ),
+    STAFF_LOGIN_MISSING(
+            "Telefon nömrəsi və ya email, və şifrə tələb olunur",
+            "Phone or email, and password are required",
+            "Требуются телефон или email и пароль"
+    ),
+    STAFF_PHONE_MUST_START_994(
+            "Telefon nömrəsi +994 ilə başlamalıdır",
+            "Phone number must start with +994",
+            "Номер телефона должен начинаться с +994"
+    ),
+    STAFF_UNKNOWN_OPERATOR(
+            "Naməlum mobil operator",
+            "Unknown mobile operator",
+            "Неизвестный мобильный оператор"
+    ),
+    STAFF_PHONE_INVALID(
+            "Telefon nömrəsi düzgün deyil",
+            "Phone number is invalid",
+            "Номер телефона некорректен"
     );
 
 

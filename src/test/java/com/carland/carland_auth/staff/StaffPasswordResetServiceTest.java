@@ -42,6 +42,7 @@ class StaffPasswordResetServiceTest {
     @Mock JWTService jwtService;
     @Mock BCryptPasswordEncoder passwordEncoder;
     @Mock CarlandBookingFeign carlandBookingFeign;
+    @Mock StaffWorkplaceService staffWorkplaceService;
 
     @InjectMocks StaffPasswordResetService service;
 

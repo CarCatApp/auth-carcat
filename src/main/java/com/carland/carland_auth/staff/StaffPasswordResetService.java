@@ -48,6 +48,7 @@ public class StaffPasswordResetService {
     private final JWTService jwtService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final CarlandBookingFeign carlandBookingFeign;
+    private final StaffWorkplaceService staffWorkplaceService;
 
     @Value("${otp.expiration-minutes}")
     private long expirationMinutes;
@@ -166,6 +167,7 @@ public class StaffPasswordResetService {
                 || StaffAccountStatus.DISABLED.name().equalsIgnoreCase(account.getStatus())) {
             throw new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.FORBIDDEN);
         }
+        staffWorkplaceService.assertOpen(account, acceptLanguage);
         account.setStaffPassword(passwordEncoder.encode(request.getNewPassword()));
         account.setStatus(StaffAccountStatus.ACTIVE.name());
         staffAccountRepository.save(account);

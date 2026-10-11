@@ -57,6 +57,14 @@ public class StaffAccount {
     @Column(nullable = false, length = 32)
     String status;
 
+    /**
+     * Hand-closed in the admin panel. Place reopen does not clear this.
+     * Null means not hand-closed. Does not replace INVITED or ACTIVE.
+     */
+    @Column(name = "manually_disabled")
+    @Builder.Default
+    Boolean manuallyDisabled = false;
+
     String name;
     String surname;
 

@@ -2,6 +2,7 @@ package com.carland.carland_auth.staff;
 
 import com.carland.carland_auth.entity.StaffAccount;
 import com.carland.carland_auth.exceptions.AuthApiException;
+import org.springframework.http.HttpStatus;
 import com.carland.carland_auth.exceptions.PinLockedException;
 import com.carland.carland_auth.exceptions.UserNotFoundException;
 import com.carland.carland_auth.exceptions.UsernameAlreadyExistException;
@@ -28,8 +29,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,6 +45,7 @@ class StaffAuthServiceTest {
     @Mock JWTService jwtService;
     @Mock CarlandBookingFeign carlandBookingFeign;
     @Mock StaffLoginAttemptService staffLoginAttemptService;
+    @Mock StaffWorkplaceService staffWorkplaceService;
 
     @InjectMocks StaffAuthService service;
 
@@ -145,6 +149,25 @@ class StaffAuthServiceTest {
         assertEquals("tok", out.getAccessToken());
         assertEquals("+994709957000", out.getPhoneNumber());
         assertEquals(Boolean.FALSE, out.getMustChangePassword());
+        verify(staffWorkplaceService).assertOpen(account, "az");
+    }
+
+    @Test
+    void loginRejectsSuspendedWorkplace() {
+        StaffAccount account = openAccount();
+        when(staffAccountRepository.findByPhoneNumber("+994709957000")).thenReturn(account);
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
+        when(passwordEncoder.matches("secret12", "hash")).thenReturn(true);
+        doThrow(new AuthApiException("COOPERATION_SUSPENDED", "Əməkdaşlıq dayandırılıb", HttpStatus.FORBIDDEN))
+                .when(staffWorkplaceService).assertOpen(account, "az");
+        UserRequest req = UserRequest.builder()
+                .phoneNumber("+994709957000")
+                .password("secret12")
+                .build();
+        AuthApiException ex = assertThrows(AuthApiException.class, () -> service.login(req, "az"));
+        assertEquals("COOPERATION_SUSPENDED", ex.getError());
+        verify(jwtService, never()).generateStaffAccessToken(
+                any(), any(), any(), any(), any(), anyLong(), any(Boolean.class));
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.carland.carland_auth.dto.response.UserResponse;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.security.InternalTokenValidator;
 import com.carland.carland_auth.staff.dto.StaffDisableRequest;
+import com.carland.carland_auth.staff.dto.StaffManualRequest;
 import com.carland.carland_auth.staff.dto.StaffNotifySmsRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordChangeRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordForgotRequest;
@@ -39,6 +40,12 @@ public class StaffAuthController {
                         HttpServletRequest httpRequest) {
         assertInternalToken(httpRequest);
         staffAuthService.disable(request);
+    }
+
+    @PostMapping("/api/v1/internal/staff/manual")
+    public void setManual(@RequestBody StaffManualRequest request, HttpServletRequest httpRequest) {
+        assertInternalToken(httpRequest);
+        staffAuthService.setManual(request);
     }
 
     @PostMapping("/api/v1/internal/staff/notify-sms")

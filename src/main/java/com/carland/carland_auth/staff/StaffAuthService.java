@@ -17,6 +17,7 @@ import com.carland.carland_auth.jwt.JWTService;
 import com.carland.carland_auth.repository.StaffAccountRepository;
 import com.carland.carland_auth.staff.dto.StaffAuditRequest;
 import com.carland.carland_auth.staff.dto.StaffDisableRequest;
+import com.carland.carland_auth.staff.dto.StaffManualRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordChangeRequest;
 import com.carland.carland_auth.staff.dto.StaffProvisionRequest;
 import com.carland.carland_auth.staff.dto.StaffProvisionResponse;
@@ -49,6 +50,7 @@ public class StaffAuthService {
     private final JWTService jwtService;
     private final CarlandBookingFeign carlandBookingFeign;
     private final StaffLoginAttemptService staffLoginAttemptService;
+    private final StaffWorkplaceService staffWorkplaceService;
 
     @Value("${staff.access-token-seconds:18000}")
     private Long staffAccessTokenSeconds;
@@ -123,6 +125,24 @@ public class StaffAuthService {
         log.info("STAFF_DISABLE_OK staffId={}", account.getId());
     }
 
+    /**
+     * Hand-close or reopen. Does not change INVITED or ACTIVE.
+     */
+    @Transactional
+    public void setManual(StaffManualRequest request) {
+        if (request == null || request.getUserId() == null || request.getDisabled() == null) {
+            throw new AuthApiException("MISSING_FIELD", "userId and disabled are required", HttpStatus.BAD_REQUEST);
+        }
+        StaffAccount account = staffAccountRepository.findById(request.getUserId()).orElse(null);
+        if (account == null) {
+            log.warn("STAFF_MANUAL_MISS staffId={}", request.getUserId());
+            return;
+        }
+        account.setManuallyDisabled(request.getDisabled());
+        staffAccountRepository.save(account);
+        log.info("STAFF_MANUAL_OK staffId={} disabled={}", account.getId(), request.getDisabled());
+    }
+
     @Transactional
     public UserResponse login(UserRequest request, String acceptLanguage) {
         if (request == null) {
@@ -176,6 +196,7 @@ public class StaffAuthService {
         }
 
         staffLoginAttemptService.clearFailureState(account.getId());
+        staffWorkplaceService.assertOpen(account, acceptLanguage);
         boolean invited = StaffAccountStatus.INVITED.name().equalsIgnoreCase(account.getStatus());
         String accessToken = jwtService.generateStaffAccessToken(
                 account.getId(), account.getPhoneNumber(), account.getRole(),
@@ -214,6 +235,7 @@ public class StaffAuthService {
         if (!isStaffRole(account.getRole()) || StaffAccountStatus.DISABLED.name().equalsIgnoreCase(account.getStatus())) {
             throw new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.FORBIDDEN);
         }
+        staffWorkplaceService.assertOpen(account, acceptLanguage);
 
         boolean invited = StaffAccountStatus.INVITED.name().equalsIgnoreCase(account.getStatus());
         if (!invited) {

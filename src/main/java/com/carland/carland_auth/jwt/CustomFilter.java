@@ -40,6 +40,7 @@ public class CustomFilter extends OncePerRequestFilter {
             "/api/v1/staff/password/reset",
             "/api/v1/internal/staff/provision",
             "/api/v1/internal/staff/disable",
+            "/api/v1/internal/staff/manual",
             "/api/v1/internal/staff/notify-sms",
             "/api/v1/users/getNameSurname",
             "/api/v1/users/list"

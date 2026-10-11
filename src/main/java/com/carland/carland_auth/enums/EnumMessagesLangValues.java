@@ -219,6 +219,16 @@ public enum EnumMessagesLangValues {
             "An account with this email already exists",
             "Аккаунт с этим email уже существует"
     ),
+    COOPERATION_SUSPENDED(
+            "Əməkdaşlıq dayandırılıb",
+            "Cooperation has been suspended",
+            "Сотрудничество приостановлено"
+    ),
+    STAFF_GATE_UNAVAILABLE(
+            "Yenidən cəhd edin",
+            "Please try again",
+            "Повторите попытку"
+    ),
     STAFF_USER_NOT_FOUND(
             "İstifadəçi tapılmadı",
             "User not found",

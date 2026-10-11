@@ -1,21 +1,18 @@
 package com.carland.carland_auth.staff;
 
 import com.carland.carland_auth.dto.response.UserResponse;
-import com.carland.carland_auth.entity.Otp;
-import com.carland.carland_auth.entity.RefreshToken;
-import com.carland.carland_auth.entity.User;
+import com.carland.carland_auth.entity.StaffAccount;
+import com.carland.carland_auth.entity.StaffOtp;
 import com.carland.carland_auth.enums.EnumMessagesLangValues;
 import com.carland.carland_auth.enums.OtpStatus;
 import com.carland.carland_auth.enums.UserRoles;
-import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.InvalidOtpCodeException;
 import com.carland.carland_auth.exceptions.MissingFieldException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
 import com.carland.carland_auth.jwt.JWTService;
-import com.carland.carland_auth.repository.OtpRepository;
-import com.carland.carland_auth.repository.UserRepository;
-import com.carland.carland_auth.service.interfaces.RefreshTokenService;
+import com.carland.carland_auth.repository.StaffAccountRepository;
+import com.carland.carland_auth.repository.StaffOtpRepository;
 import com.carland.carland_auth.service.interfaces.SMSService;
 import com.carland.carland_auth.staff.dto.StaffPasswordForgotRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordResetRequest;
@@ -43,13 +40,13 @@ public class StaffPasswordResetService {
 
     private static final int MIN_PASSWORD_LENGTH = 8;
 
-    private final UserRepository userRepository;
-    private final OtpRepository otpRepository;
+    private final StaffAccountRepository staffAccountRepository;
+    private final StaffOtpRepository staffOtpRepository;
+    private final StaffOtpHasher staffOtpHasher;
     private final SMSService smsService;
     private final StaffMailSender staffMailSender;
     private final JWTService jwtService;
     private final BCryptPasswordEncoder passwordEncoder;
-    private final RefreshTokenService refreshTokenService;
     private final CarlandBookingFeign carlandBookingFeign;
 
     @Value("${otp.expiration-minutes}")
@@ -58,8 +55,11 @@ public class StaffPasswordResetService {
     @Value("${authentication.token.expiration}")
     private Long resetTokenExpiration;
 
-    @Value("${access.token.expiration}")
-    private Long accessTokenExpiration;
+    @Value("${staff.access-token-seconds:18000}")
+    private Long staffAccessTokenSeconds;
+
+    @Value("${staff.otp.max-verify-attempts:3}")
+    private int maxVerifyAttempts;
 
     @Value("${carland.internal-token:}")
     private String internalToken;
@@ -70,34 +70,33 @@ public class StaffPasswordResetService {
             throw new HttpMessageConversionException(EnumMessagesLangValues.MISSING_BODY.getMessageByLang(acceptLanguage));
         }
         String channel = normalizeChannel(request.getChannel());
-        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
-        if (user == null) {
+        StaffAccount account = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
+        if (account == null) {
             return UserResponse.builder()
                     .message(EnumMessagesLangValues.OTP_SENT.getMessageByLang(acceptLanguage))
                     .build();
         }
         String code = String.valueOf(100000 + ThreadLocalRandom.current().nextInt(900000));
-        expirePending(user.getId());
-        otpRepository.save(Otp.builder()
-                .code(code)
+        expirePending(account.getId());
+        staffOtpRepository.save(StaffOtp.builder()
+                .staffAccountId(account.getId())
+                .codeHash(staffOtpHasher.hash(code))
                 .status(OtpStatus.PENDING.name())
+                .verifyFailCount(0)
                 .createdAt(LocalDateTime.now())
-                .userId(user.getId())
-                .phoneNumber(user.getPhoneNumber())
-                .hashed(false)
                 .build());
-        otpRepository.flush();
+        staffOtpRepository.flush();
         try {
             if ("EMAIL".equals(channel)) {
-                if (user.getEmail() != null && !user.getEmail().isBlank()) {
-                    staffMailSender.sendHtml(user.getEmail(), "CarCat OTP",
+                if (account.getEmail() != null && !account.getEmail().isBlank()) {
+                    staffMailSender.sendHtml(account.getEmail(), "CarCat OTP",
                             "<p>CarCat otp kodunuz: <b>" + code + "</b></p>");
                 }
             } else {
-                smsService.sendSms(user.getId(), "az");
+                smsService.sendOtpToPhone(account.getPhoneNumber(), code, acceptLanguage);
             }
         } catch (Exception ex) {
-            log.warn("STAFF_OTP_SEND_FAIL userId={} channel={}", user.getId(), channel);
+            log.warn("STAFF_OTP_SEND_FAIL staffId={} channel={}", account.getId(), channel);
         }
         return UserResponse.builder()
                 .message(EnumMessagesLangValues.OTP_SENT.getMessageByLang(acceptLanguage))
@@ -109,20 +108,34 @@ public class StaffPasswordResetService {
         if (request == null || request.getOtp() == null || request.getOtp().isBlank()) {
             throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
         }
-        User user = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
-        if (user == null) {
+        StaffAccount account = findStaffQuietly(request.getPhoneNumber(), request.getEmail(), acceptLanguage);
+        if (account == null) {
             throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
         }
-        Otp otp = otpRepository.findTopByUserIdAndStatusOrderByCreatedAtDesc(user.getId(), OtpStatus.PENDING.name());
-        if (otp == null || otp.getCode() == null || !otp.getCode().equals(request.getOtp().trim())) {
+        StaffOtp otp = staffOtpRepository.findTopByStaffAccountIdAndStatusOrderByCreatedAtDesc(
+                account.getId(), OtpStatus.PENDING.name());
+        if (otp == null || otp.getCodeHash() == null) {
             throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
         }
         if (LocalDateTime.now().isAfter(otp.getCreatedAt().plusMinutes(expirationMinutes))) {
+            otp.setStatus(OtpStatus.FAIL.name());
+            staffOtpRepository.save(otp);
             throw new InvalidOtpCodeException(EnumMessagesLangValues.EXPIRED_OTP.getMessageByLang(acceptLanguage));
         }
+        if (!staffOtpHasher.matches(request.getOtp().trim(), otp.getCodeHash())) {
+            int fails = otp.getVerifyFailCount() == null ? 0 : otp.getVerifyFailCount();
+            fails = fails + 1;
+            otp.setVerifyFailCount(fails);
+            if (fails >= maxVerifyAttempts) {
+                otp.setStatus(OtpStatus.FAIL.name());
+            }
+            staffOtpRepository.save(otp);
+            throw new InvalidOtpCodeException(EnumMessagesLangValues.INVALID_OTP_CODE.getMessageByLang(acceptLanguage));
+        }
         otp.setStatus(OtpStatus.SUCCESS.name());
-        otpRepository.save(otp);
-        String resetToken = jwtService.generateStaffResetToken(user, resetTokenExpiration);
+        staffOtpRepository.save(otp);
+        String resetToken = jwtService.generateStaffResetToken(
+                account.getId(), account.getPhoneNumber(), resetTokenExpiration);
         return StaffPasswordVerifyResponse.builder()
                 .resetToken(resetToken)
                 .message(EnumMessagesLangValues.OTP_VERIFIED_SUCCESS.getMessageByLang(acceptLanguage))
@@ -143,36 +156,31 @@ public class StaffPasswordResetService {
                     HttpStatus.BAD_REQUEST);
         }
         jwtService.assertStaffResetToken(request.getResetToken());
-        Long userId = jwtService.extractUserIdFromAuthenticationToken(request.getResetToken());
-        if (userId == null) {
+        Long staffId = jwtService.extractUserIdFromAuthenticationToken(request.getResetToken());
+        if (staffId == null || staffId < StaffIds.MIN_ID) {
             throw new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED);
         }
-        User user = userRepository.findById(userId).orElseThrow(() ->
+        StaffAccount account = staffAccountRepository.findById(staffId).orElseThrow(() ->
                 new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED));
-        if (!isStaffRole(user.getRole())) {
+        if (!isStaffRole(account.getRole())
+                || StaffAccountStatus.DISABLED.name().equalsIgnoreCase(account.getStatus())) {
             throw new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.FORBIDDEN);
         }
-        user.setPin(passwordEncoder.encode(request.getNewPassword()));
-        user.setStatus(UserStatus.ACTIVE.name());
-        userRepository.save(user);
-        notifyCarlandActivated(user.getId());
+        account.setStaffPassword(passwordEncoder.encode(request.getNewPassword()));
+        account.setStatus(StaffAccountStatus.ACTIVE.name());
+        staffAccountRepository.save(account);
+        notifyCarlandActivated(account.getId());
 
-        String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration, false);
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
-        refreshToken.setUser(user);
-        if (user.getRefreshTokens() == null) {
-            user.setRefreshTokens(new java.util.ArrayList<>());
-        }
-        user.getRefreshTokens().add(refreshToken);
-        userRepository.save(user);
+        String accessToken = jwtService.generateStaffAccessToken(
+                account.getId(), account.getPhoneNumber(), account.getRole(),
+                account.getName(), account.getSurname(), staffAccessTokenSeconds, false);
         return UserResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
-                .role(user.getRole())
-                .userId(user.getId())
-                .name(user.getName())
-                .surname(user.getSurname())
-                .phoneNumber(user.getPhoneNumber())
+                .role(account.getRole())
+                .userId(account.getId())
+                .name(account.getName())
+                .surname(account.getSurname())
+                .phoneNumber(account.getPhoneNumber())
                 .mustChangePassword(false)
                 .message(EnumMessagesLangValues.SUCCESS.getMessageByLang(acceptLanguage))
                 .build();
@@ -189,41 +197,40 @@ public class StaffPasswordResetService {
         smsService.sendTextToPhone(phone, text.trim());
     }
 
-    private User findStaffQuietly(String phoneRaw, String emailRaw, String lang) {
+    private StaffAccount findStaffQuietly(String phoneRaw, String emailRaw, String lang) {
         String phone = StaffPhones.requireLoginPhone(phoneRaw, lang);
         String email = StaffAuthService.normalizeEmail(emailRaw);
-        User user = phone != null
-                ? userRepository.findByPhoneNumber(phone)
-                : (email == null ? null : userRepository.findByEmailIgnoreCase(email));
-        if (user == null || !isStaffRole(user.getRole())) {
+        StaffAccount account = phone != null
+                ? staffAccountRepository.findByPhoneNumber(phone)
+                : (email == null ? null : staffAccountRepository.findByEmailIgnoreCase(email));
+        if (account == null || !isStaffRole(account.getRole())) {
             return null;
         }
-        if (UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())
-                || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())) {
+        if (StaffAccountStatus.DISABLED.name().equalsIgnoreCase(account.getStatus())) {
             return null;
         }
-        return user;
+        return account;
     }
 
-    private void expirePending(Long userId) {
-        List<Otp> pending = otpRepository.findAllByUserIdAndStatus(userId, OtpStatus.PENDING.name());
-        for (Otp otp : pending) {
+    private void expirePending(Long staffId) {
+        List<StaffOtp> pending = staffOtpRepository.findAllByStaffAccountIdAndStatus(staffId, OtpStatus.PENDING.name());
+        for (StaffOtp otp : pending) {
             otp.setStatus(OtpStatus.FAIL.name());
         }
         if (!pending.isEmpty()) {
-            otpRepository.saveAll(pending);
+            staffOtpRepository.saveAll(pending);
         }
     }
 
-    private void notifyCarlandActivated(Long userId) {
+    private void notifyCarlandActivated(Long staffId) {
         if (!StringUtils.hasText(internalToken)) {
-            log.warn("STAFF_ACTIVATE_SKIP userId={} reason=no_internal_token", userId);
+            log.warn("STAFF_ACTIVATE_SKIP staffId={} reason=no_internal_token", staffId);
             return;
         }
         try {
-            carlandBookingFeign.activateStaff(internalToken, userId);
+            carlandBookingFeign.activateStaff(internalToken, staffId);
         } catch (Exception ex) {
-            log.warn("STAFF_ACTIVATE_FEIGN_FAIL userId={}", userId);
+            log.warn("STAFF_ACTIVATE_FEIGN_FAIL staffId={}", staffId);
         }
     }
 

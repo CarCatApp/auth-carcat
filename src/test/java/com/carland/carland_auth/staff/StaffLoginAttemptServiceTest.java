@@ -1,7 +1,7 @@
 package com.carland.carland_auth.staff;
 
-import com.carland.carland_auth.entity.User;
-import com.carland.carland_auth.repository.UserRepository;
+import com.carland.carland_auth.entity.StaffAccount;
+import com.carland.carland_auth.repository.StaffAccountRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,7 +21,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class StaffLoginAttemptServiceTest {
 
-    @Mock UserRepository userRepository;
+    @Mock StaffAccountRepository staffAccountRepository;
     @InjectMocks StaffLoginAttemptService service;
 
     @BeforeEach
@@ -33,26 +33,26 @@ class StaffLoginAttemptServiceTest {
 
     @Test
     void thirdFailureLocks() {
-        User user = User.builder()
-                .id(1L)
-                .failedPinAttempts(2)
-                .lastFailedPinAt(LocalDateTime.now())
+        StaffAccount account = StaffAccount.builder()
+                .id(StaffIds.MIN_ID)
+                .failedAttempts(2)
+                .lastFailedAt(LocalDateTime.now())
                 .build();
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
+        when(staffAccountRepository.save(any(StaffAccount.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        StaffLoginAttemptService.Result result = service.recordWrongPassword(1L);
+        StaffLoginAttemptService.Result result = service.recordWrongPassword(StaffIds.MIN_ID);
         assertTrue(result.locked());
-        assertTrue(user.getPinLockedUntil().isAfter(LocalDateTime.now().minusSeconds(1)));
+        assertTrue(account.getLockedUntil().isAfter(LocalDateTime.now().minusSeconds(1)));
     }
 
     @Test
     void firstFailureDoesNotLock() {
-        User user = User.builder().id(1L).failedPinAttempts(0).build();
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        StaffAccount account = StaffAccount.builder().id(StaffIds.MIN_ID).failedAttempts(0).build();
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
+        when(staffAccountRepository.save(any(StaffAccount.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        StaffLoginAttemptService.Result result = service.recordWrongPassword(1L);
+        StaffLoginAttemptService.Result result = service.recordWrongPassword(StaffIds.MIN_ID);
         assertFalse(result.locked());
     }
 }

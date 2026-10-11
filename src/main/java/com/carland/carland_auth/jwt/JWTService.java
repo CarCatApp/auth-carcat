@@ -92,10 +92,31 @@ public class JWTService {
                 .compact();
     }
 
-    public String generateStaffResetToken(User user, Long expirationTime) {
+    /**
+     * Staff access token. Same claims as a customer access token, own lifetime.
+     * Does not use {@code access.token.expiration}.
+     */
+    public String generateStaffAccessToken(Long staffId, String phoneNumber, String role,
+                                           String name, String surname,
+                                           long expirationSeconds, boolean mustChangePassword) {
         return Jwts.builder()
-                .claim("userId", user.getId())
-                .claim("phoneNumber", user.getPhoneNumber())
+                .subject(phoneNumber)
+                .claim("userId", staffId)
+                .claim("role", role)
+                .claim("name", name)
+                .claim("surname", surname)
+                .claim("mustChangePassword", mustChangePassword)
+                .issuedAt(new Date())
+                .expiration(Date.from(Instant.now().plusSeconds(expirationSeconds)))
+                .signWith(getSignKey(accessTokenSecretKey))
+                .issuer(issuerKey)
+                .compact();
+    }
+
+    public String generateStaffResetToken(Long staffId, String phoneNumber, Long expirationTime) {
+        return Jwts.builder()
+                .claim("userId", staffId)
+                .claim("phoneNumber", phoneNumber)
                 .claim("purpose", "STAFF_PASSWORD_RESET")
                 .claim("type", "AUTH_FLOW")
                 .subject("staff-password-reset")

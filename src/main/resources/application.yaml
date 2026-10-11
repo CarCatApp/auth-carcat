@@ -76,10 +76,15 @@ pin:
   lock-duration-minutes: 5
 
 staff:
+  # Panel access token only. Customer tokens stay on access.token.expiration.
+  access-token-seconds: 18000
   login:
     max-attempts: ${STAFF_LOGIN_MAX_ATTEMPTS:3}
     attempt-window-minutes: ${STAFF_LOGIN_ATTEMPT_WINDOW_MINUTES:10}
     lock-duration-minutes: ${STAFF_LOGIN_LOCK_DURATION_MINUTES:5}
+  otp:
+    pepper: ${STAFF_OTP_PEPPER:}
+    max-verify-attempts: 3
 
 brevo:
   api-key: ${BREVO_API_KEY:}

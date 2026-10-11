@@ -1,7 +1,6 @@
 package com.carland.carland_auth.staff;
 
-import com.carland.carland_auth.enums.UserRoles;
-import com.carland.carland_auth.enums.UserStatus;
+import com.carland.carland_auth.entity.StaffAccount;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.PinLockedException;
 import com.carland.carland_auth.exceptions.UserNotFoundException;
@@ -9,11 +8,9 @@ import com.carland.carland_auth.exceptions.UsernameAlreadyExistException;
 import com.carland.carland_auth.exceptions.WrongPasswordException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
 import com.carland.carland_auth.jwt.JWTService;
-import com.carland.carland_auth.repository.UserRepository;
-import com.carland.carland_auth.service.interfaces.RefreshTokenService;
+import com.carland.carland_auth.repository.StaffAccountRepository;
 import com.carland.carland_auth.staff.dto.StaffProvisionRequest;
 import com.carland.carland_auth.dto.request.UserRequest;
-import com.carland.carland_auth.entity.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,16 +28,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class StaffAuthServiceTest {
 
-    @Mock UserRepository userRepository;
+    @Mock StaffAccountRepository staffAccountRepository;
     @Mock BCryptPasswordEncoder passwordEncoder;
     @Mock JWTService jwtService;
-    @Mock RefreshTokenService refreshTokenService;
     @Mock CarlandBookingFeign carlandBookingFeign;
     @Mock StaffLoginAttemptService staffLoginAttemptService;
 
@@ -48,53 +47,65 @@ class StaffAuthServiceTest {
 
     @BeforeEach
     void exp() {
-        ReflectionTestUtils.setField(service, "accessTokenExpiration", 900L);
+        ReflectionTestUtils.setField(service, "staffAccessTokenSeconds", 18000L);
         ReflectionTestUtils.setField(service, "internalToken", "x");
     }
 
     @Test
     void provisionRejectsExistingPhone() {
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(User.builder().id(1L).build());
+        when(staffAccountRepository.existsByPhoneNumber("+994709957000")).thenReturn(true);
         StaffProvisionRequest req = StaffProvisionRequest.builder()
                 .phoneNumber("0709957000")
                 .role("PARTNER_ADMIN")
                 .build();
         assertThrows(UsernameAlreadyExistException.class, () -> service.provision(req, "az"));
+        verify(staffAccountRepository, never()).save(any());
     }
 
     @Test
     void provisionCreatesInvitedStaff() {
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(null);
+        when(staffAccountRepository.existsByPhoneNumber("+994709957000")).thenReturn(false);
         when(passwordEncoder.encode(any())).thenReturn("hash");
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> {
-            User u = inv.getArgument(0);
-            u.setId(42L);
-            return u;
+        when(staffAccountRepository.save(any(StaffAccount.class))).thenAnswer(inv -> {
+            StaffAccount account = inv.getArgument(0);
+            account.setId(StaffIds.MIN_ID);
+            return account;
         });
         var out = service.provision(StaffProvisionRequest.builder()
                 .phoneNumber("+994709957000")
                 .role("BRANCH_ADMIN")
                 .build(), "az");
-        assertEquals(42L, out.getUserId());
+        assertEquals(StaffIds.MIN_ID, out.getUserId());
         assertNotNull(out.getOneTimePassword());
-        ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(cap.capture());
-        assertEquals(UserStatus.INVITED.name(), cap.getValue().getStatus());
-        assertEquals(UserRoles.BRANCH_ADMIN.name(), cap.getValue().getRole());
+        ArgumentCaptor<StaffAccount> cap = ArgumentCaptor.forClass(StaffAccount.class);
+        verify(staffAccountRepository).save(cap.capture());
+        assertEquals(StaffAccountStatus.INVITED.name(), cap.getValue().getStatus());
+        assertEquals("BRANCH_ADMIN", cap.getValue().getRole());
+        assertEquals("hash", cap.getValue().getStaffPassword());
+    }
+
+    @Test
+    void provisionRejectsIdInCustomerRange() {
+        when(staffAccountRepository.existsByPhoneNumber("+994709957000")).thenReturn(false);
+        when(passwordEncoder.encode(any())).thenReturn("hash");
+        when(staffAccountRepository.save(any(StaffAccount.class))).thenAnswer(inv -> {
+            StaffAccount account = inv.getArgument(0);
+            account.setId(42L);
+            return account;
+        });
+        assertThrows(AuthApiException.class, () -> service.provision(StaffProvisionRequest.builder()
+                .phoneNumber("+994709957000")
+                .role("BRANCH_ADMIN")
+                .build(), "az"));
+        verify(staffAccountRepository).delete(any(StaffAccount.class));
     }
 
     @Test
     void loginRejectsWhenAccountLocked() {
-        User user = User.builder()
-                .id(7L)
-                .phoneNumber("+994709957000")
-                .role(UserRoles.BRANCH_ADMIN.name())
-                .status(UserStatus.ACTIVE.name())
-                .pin("hash")
-                .pinLockedUntil(LocalDateTime.now().plusMinutes(5))
-                .build();
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(user);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        StaffAccount account = openAccount();
+        account.setLockedUntil(LocalDateTime.now().plusMinutes(5));
+        when(staffAccountRepository.findByPhoneNumber("+994709957000")).thenReturn(account);
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
                 .password("secret12")
@@ -104,17 +115,11 @@ class StaffAuthServiceTest {
 
     @Test
     void loginLocksAfterFailedAttempts() {
-        User user = User.builder()
-                .id(7L)
-                .phoneNumber("+994709957000")
-                .role(UserRoles.BRANCH_ADMIN.name())
-                .status(UserStatus.ACTIVE.name())
-                .pin("hash")
-                .build();
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(user);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        StaffAccount account = openAccount();
+        when(staffAccountRepository.findByPhoneNumber("+994709957000")).thenReturn(account);
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
         when(passwordEncoder.matches("wrongpass", "hash")).thenReturn(false);
-        when(staffLoginAttemptService.recordWrongPassword(7L))
+        when(staffLoginAttemptService.recordWrongPassword(StaffIds.MIN_ID))
                 .thenReturn(new StaffLoginAttemptService.Result(true, LocalDateTime.now().plusMinutes(5), 300));
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
@@ -124,23 +129,14 @@ class StaffAuthServiceTest {
     }
 
     @Test
-    void loginByEmail() {
-        User user = User.builder()
-                .id(7L)
-                .phoneNumber("+994709957000")
-                .email("staff@example.com")
-                .role(UserRoles.BRANCH_ADMIN.name())
-                .status(UserStatus.ACTIVE.name())
-                .pin("hash")
-                .refreshTokens(new java.util.ArrayList<>())
-                .build();
-        when(userRepository.findByEmailIgnoreCase("staff@example.com")).thenReturn(user);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+    void loginByEmailUsesFiveHourToken() {
+        StaffAccount account = openAccount();
+        when(staffAccountRepository.findByEmailIgnoreCase("staff@example.com")).thenReturn(account);
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
         when(passwordEncoder.matches("secret12", "hash")).thenReturn(true);
-        when(jwtService.generateAccessToken(user, 900L, false)).thenReturn("tok");
-        when(refreshTokenService.createRefreshToken(user)).thenReturn(
-                com.carland.carland_auth.entity.RefreshToken.builder().token("r").build());
-        when(userRepository.save(user)).thenReturn(user);
+        when(jwtService.generateStaffAccessToken(
+                eq(StaffIds.MIN_ID), eq("+994709957000"), eq("BRANCH_ADMIN"),
+                isNull(), isNull(), eq(18000L), eq(false))).thenReturn("tok");
         UserRequest req = UserRequest.builder()
                 .email("staff@example.com")
                 .password("secret12")
@@ -148,21 +144,16 @@ class StaffAuthServiceTest {
         var out = service.login(req, "az");
         assertEquals("tok", out.getAccessToken());
         assertEquals("+994709957000", out.getPhoneNumber());
+        assertEquals(Boolean.FALSE, out.getMustChangePassword());
     }
 
     @Test
     void loginWrongPasswordWithoutLock() {
-        User user = User.builder()
-                .id(7L)
-                .phoneNumber("+994709957000")
-                .role(UserRoles.BRANCH_ADMIN.name())
-                .status(UserStatus.ACTIVE.name())
-                .pin("hash")
-                .build();
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(user);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        StaffAccount account = openAccount();
+        when(staffAccountRepository.findByPhoneNumber("+994709957000")).thenReturn(account);
+        when(staffAccountRepository.findById(StaffIds.MIN_ID)).thenReturn(Optional.of(account));
         when(passwordEncoder.matches("wrongpass", "hash")).thenReturn(false);
-        when(staffLoginAttemptService.recordWrongPassword(7L))
+        when(staffLoginAttemptService.recordWrongPassword(StaffIds.MIN_ID))
                 .thenReturn(new StaffLoginAttemptService.Result(false, null, 0));
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
@@ -174,7 +165,7 @@ class StaffAuthServiceTest {
 
     @Test
     void loginUnknownPhoneSaysUserNotFound() {
-        when(userRepository.findByPhoneNumber("+994500000001")).thenReturn(null);
+        when(staffAccountRepository.findByPhoneNumber("+994500000001")).thenReturn(null);
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994500000001")
                 .password("20262026")
@@ -185,7 +176,7 @@ class StaffAuthServiceTest {
 
     @Test
     void loginUnknownEmailSaysUserNotFound() {
-        when(userRepository.findByEmailIgnoreCase("ghost@example.com")).thenReturn(null);
+        when(staffAccountRepository.findByEmailIgnoreCase("ghost@example.com")).thenReturn(null);
         UserRequest req = UserRequest.builder()
                 .email("ghost@example.com")
                 .password("20262026")
@@ -195,15 +186,8 @@ class StaffAuthServiceTest {
     }
 
     @Test
-    void loginOwnerPhoneIsUserNotFoundNotPin() {
-        User owner = User.builder()
-                .id(9L)
-                .phoneNumber("+994709957000")
-                .role(UserRoles.USER.name())
-                .status(UserStatus.ACTIVE.name())
-                .pin("hash")
-                .build();
-        when(userRepository.findByPhoneNumber("+994709957000")).thenReturn(owner);
+    void customerPhoneIsNotAStaffLogin() {
+        when(staffAccountRepository.findByPhoneNumber("+994709957000")).thenReturn(null);
         UserRequest req = UserRequest.builder()
                 .phoneNumber("+994709957000")
                 .password("20262026")
@@ -243,5 +227,16 @@ class StaffAuthServiceTest {
         AuthApiException ex = assertThrows(AuthApiException.class, () -> service.login(req, "az"));
         assertEquals("WEAK_PASSWORD", ex.getError());
         assertEquals("Zəif şifrə. Minimum 8 simvol istifadə edin", ex.getMessage());
+    }
+
+    private static StaffAccount openAccount() {
+        return StaffAccount.builder()
+                .id(StaffIds.MIN_ID)
+                .phoneNumber("+994709957000")
+                .email("staff@example.com")
+                .role("BRANCH_ADMIN")
+                .status(StaffAccountStatus.ACTIVE.name())
+                .staffPassword("hash")
+                .build();
     }
 }

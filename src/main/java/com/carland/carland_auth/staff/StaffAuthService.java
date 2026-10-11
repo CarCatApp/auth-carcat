@@ -2,11 +2,9 @@ package com.carland.carland_auth.staff;
 
 import com.carland.carland_auth.dto.request.UserRequest;
 import com.carland.carland_auth.dto.response.UserResponse;
-import com.carland.carland_auth.entity.RefreshToken;
-import com.carland.carland_auth.entity.User;
+import com.carland.carland_auth.entity.StaffAccount;
 import com.carland.carland_auth.enums.EnumMessagesLangValues;
 import com.carland.carland_auth.enums.UserRoles;
-import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.MissingFieldException;
 import com.carland.carland_auth.exceptions.PinLockedException;
@@ -16,8 +14,7 @@ import com.carland.carland_auth.exceptions.WrongPasswordException;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
 import com.carland.carland_auth.jwt.CarlandPrincipal;
 import com.carland.carland_auth.jwt.JWTService;
-import com.carland.carland_auth.repository.UserRepository;
-import com.carland.carland_auth.service.interfaces.RefreshTokenService;
+import com.carland.carland_auth.repository.StaffAccountRepository;
 import com.carland.carland_auth.staff.dto.StaffAuditRequest;
 import com.carland.carland_auth.staff.dto.StaffDisableRequest;
 import com.carland.carland_auth.staff.dto.StaffPasswordChangeRequest;
@@ -27,6 +24,7 @@ import com.carland.carland_auth.util.PhoneNumbers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.security.core.Authentication;
@@ -46,15 +44,14 @@ public class StaffAuthService {
 
     private static final int MIN_PASSWORD_LENGTH = 8;
 
-    private final UserRepository userRepository;
+    private final StaffAccountRepository staffAccountRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private final JWTService jwtService;
-    private final RefreshTokenService refreshTokenService;
     private final CarlandBookingFeign carlandBookingFeign;
     private final StaffLoginAttemptService staffLoginAttemptService;
 
-    @Value("${access.token.expiration}")
-    private Long accessTokenExpiration;
+    @Value("${staff.access-token-seconds:18000}")
+    private Long staffAccessTokenSeconds;
 
     @Value("${carland.internal-token:}")
     private String internalToken;
@@ -73,33 +70,40 @@ public class StaffAuthService {
         if (!UserRoles.PARTNER_ADMIN.name().equals(role) && !UserRoles.BRANCH_ADMIN.name().equals(role)) {
             throw new AuthApiException("INVALID_ROLE", "role must be PARTNER_ADMIN or BRANCH_ADMIN", HttpStatus.BAD_REQUEST);
         }
-        if (userRepository.findByPhoneNumber(phone) != null) {
+        if (staffAccountRepository.existsByPhoneNumber(phone)) {
             throw new UsernameAlreadyExistException(
                     EnumMessagesLangValues.USERNAME_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
         }
         String email = normalizeEmail(request.getEmail());
-        if (email != null && userRepository.findByEmailIgnoreCase(email) != null) {
+        if (email != null && staffAccountRepository.existsByEmailIgnoreCase(email)) {
             throw new UsernameAlreadyExistException(
                     EnumMessagesLangValues.EMAIL_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
         }
 
         String oneTime = UUID.randomUUID().toString();
-        User user = User.builder()
+        StaffAccount account = StaffAccount.builder()
                 .phoneNumber(phone)
                 .email(email)
+                .staffPassword(passwordEncoder.encode(oneTime))
                 .name(blankToNull(request.getName()))
                 .surname(blankToNull(request.getSurname()))
-                .pin(passwordEncoder.encode(oneTime))
-                .pinHash(null)
                 .role(role)
-                .status(UserStatus.INVITED.name())
+                .status(StaffAccountStatus.INVITED.name())
+                .failedAttempts(0)
                 .createdAt(LocalDateTime.now())
-                .failedPinAttempts(0)
                 .build();
-        userRepository.save(user);
-        log.info("STAFF_PROVISION_OK userId={} role={}", user.getId(), role);
+        StaffAccount saved = saveNew(account, acceptLanguage);
+        if (saved.getId() == null || saved.getId() < StaffIds.MIN_ID) {
+            if (saved.getId() != null) {
+                staffAccountRepository.delete(saved);
+            }
+            log.error("STAFF_ID_BELOW_MIN id={}", saved.getId());
+            throw new AuthApiException("STAFF_ID_RANGE",
+                    "Staff id sequence is below 100000000", HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        log.info("STAFF_PROVISION_OK staffId={} role={}", saved.getId(), role);
         return StaffProvisionResponse.builder()
-                .userId(user.getId())
+                .userId(saved.getId())
                 .phoneNumber(phone)
                 .oneTimePassword(oneTime)
                 .build();
@@ -110,16 +114,13 @@ public class StaffAuthService {
         if (request == null || request.getUserId() == null) {
             throw new AuthApiException("MISSING_FIELD", "userId is required", HttpStatus.BAD_REQUEST);
         }
-        User user = userRepository.findById(request.getUserId()).orElse(null);
-        if (user == null) {
+        StaffAccount account = staffAccountRepository.findById(request.getUserId()).orElse(null);
+        if (account == null) {
             return;
         }
-        if (!isStaffRole(user.getRole())) {
-            throw new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.BAD_REQUEST);
-        }
-        user.setStatus(UserStatus.BLOCKED.name());
-        userRepository.save(user);
-        log.info("STAFF_DISABLE_OK userId={}", user.getId());
+        account.setStatus(StaffAccountStatus.DISABLED.name());
+        staffAccountRepository.save(account);
+        log.info("STAFF_DISABLE_OK staffId={}", account.getId());
     }
 
     @Transactional
@@ -139,65 +140,55 @@ public class StaffAuthService {
             throw new MissingFieldException(EnumMessagesLangValues.STAFF_LOGIN_MISSING.getMessageByLang(acceptLanguage));
         }
 
-        User user = phone != null
-                ? userRepository.findByPhoneNumber(phone)
-                : userRepository.findByEmailIgnoreCase(email);
-        if (user == null || UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())
-                || UserStatus.BLOCKED.name().equalsIgnoreCase(user.getStatus())
-                || !isStaffRole(user.getRole())) {
+        StaffAccount account = phone != null
+                ? staffAccountRepository.findByPhoneNumber(phone)
+                : staffAccountRepository.findByEmailIgnoreCase(email);
+        if (account == null || !isOpen(account)) {
             auditLogin(null, phone != null ? phone : email, false, "FAIL");
             throw new UserNotFoundException(EnumMessagesLangValues.STAFF_USER_NOT_FOUND.getMessageByLang(acceptLanguage));
         }
-        boolean invited = UserStatus.INVITED.name().equalsIgnoreCase(user.getStatus());
-        boolean active = UserStatus.ACTIVE.name().equalsIgnoreCase(user.getStatus());
-        if (!invited && !active) {
-            auditLogin(user, user.getPhoneNumber(), false, "FAIL");
-            throw new UserNotFoundException(EnumMessagesLangValues.STAFF_USER_NOT_FOUND.getMessageByLang(acceptLanguage));
-        }
 
-        staffLoginAttemptService.clearExpiredLock(user.getId());
-        user = userRepository.findById(user.getId()).orElseThrow();
-        String auditId = user.getPhoneNumber();
+        staffLoginAttemptService.clearExpiredLock(account.getId());
+        account = staffAccountRepository.findById(account.getId()).orElseThrow();
+        String auditId = account.getPhoneNumber();
         LocalDateTime now = LocalDateTime.now();
-        if (user.getPinLockedUntil() != null && user.getPinLockedUntil().isAfter(now)) {
-            long remaining = Math.max(1, java.time.Duration.between(now, user.getPinLockedUntil()).getSeconds());
-            auditLogin(user, auditId, false, "LOCKED");
+        if (account.getLockedUntil() != null && account.getLockedUntil().isAfter(now)) {
+            long remaining = Math.max(1, java.time.Duration.between(now, account.getLockedUntil()).getSeconds());
+            auditLogin(account, auditId, false, "LOCKED");
             throw new PinLockedException(
                     EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
-                    user.getPinLockedUntil(),
+                    account.getLockedUntil(),
                     remaining);
         }
 
-        if (user.getPin() == null || user.getPin().isBlank() || !passwordEncoder.matches(password, user.getPin())) {
-            StaffLoginAttemptService.Result result = staffLoginAttemptService.recordWrongPassword(user.getId());
+        if (account.getStaffPassword() == null || account.getStaffPassword().isBlank()
+                || !passwordEncoder.matches(password, account.getStaffPassword())) {
+            StaffLoginAttemptService.Result result = staffLoginAttemptService.recordWrongPassword(account.getId());
             if (result.locked()) {
-                auditLogin(user, auditId, false, "LOCKED");
+                auditLogin(account, auditId, false, "LOCKED");
                 throw new PinLockedException(
                         EnumMessagesLangValues.PIN_LOCKED.getMessageByLang(acceptLanguage),
                         result.lockedUntil(),
                         result.remainingSeconds());
             }
-            auditLogin(user, auditId, false, "FAIL");
+            auditLogin(account, auditId, false, "FAIL");
             throw new WrongPasswordException(EnumMessagesLangValues.STAFF_WRONG_PASSWORD.getMessageByLang(acceptLanguage));
         }
 
-        staffLoginAttemptService.clearFailureState(user.getId());
-
-        String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration, invited);
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
-        refreshToken.setUser(user);
-        user.getRefreshTokens().add(refreshToken);
-        userRepository.save(user);
-        auditLogin(user, auditId, true, "OK");
+        staffLoginAttemptService.clearFailureState(account.getId());
+        boolean invited = StaffAccountStatus.INVITED.name().equalsIgnoreCase(account.getStatus());
+        String accessToken = jwtService.generateStaffAccessToken(
+                account.getId(), account.getPhoneNumber(), account.getRole(),
+                account.getName(), account.getSurname(), staffAccessTokenSeconds, invited);
+        auditLogin(account, auditId, true, "OK");
 
         return UserResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
-                .role(user.getRole())
-                .userId(user.getId())
-                .name(user.getName())
-                .surname(user.getSurname())
-                .phoneNumber(user.getPhoneNumber())
+                .role(account.getRole())
+                .userId(account.getId())
+                .name(account.getName())
+                .surname(account.getSurname())
+                .phoneNumber(account.getPhoneNumber())
                 .mustChangePassword(invited)
                 .message(EnumMessagesLangValues.LOGIN_SUCCESS.getMessageByLang(acceptLanguage))
                 .build();
@@ -218,54 +209,66 @@ public class StaffAuthService {
         if (authentication == null || !(authentication.getPrincipal() instanceof CarlandPrincipal principal)) {
             throw new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED);
         }
-        User user = userRepository.findById(principal.getUserId()).orElseThrow(() ->
-                new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED));
-        if (!isStaffRole(user.getRole())) {
+        StaffAccount account = staffAccountRepository.findById(principal.getUserId()).orElseThrow(() ->
+                new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.FORBIDDEN));
+        if (!isStaffRole(account.getRole()) || StaffAccountStatus.DISABLED.name().equalsIgnoreCase(account.getStatus())) {
             throw new AuthApiException("INVALID_ROLE", "not a booking staff user", HttpStatus.FORBIDDEN);
         }
 
-        boolean invited = UserStatus.INVITED.name().equalsIgnoreCase(user.getStatus());
+        boolean invited = StaffAccountStatus.INVITED.name().equalsIgnoreCase(account.getStatus());
         if (!invited) {
             if (request.getCurrentPassword() == null || request.getCurrentPassword().isBlank()) {
                 throw new MissingFieldException(
                         EnumMessagesLangValues.STAFF_CURRENT_PASSWORD_REQUIRED.getMessageByLang(acceptLanguage));
             }
-            if (user.getPin() == null || !passwordEncoder.matches(request.getCurrentPassword(), user.getPin())) {
+            if (account.getStaffPassword() == null
+                    || !passwordEncoder.matches(request.getCurrentPassword(), account.getStaffPassword())) {
                 throw new WrongPasswordException(EnumMessagesLangValues.STAFF_WRONG_PASSWORD.getMessageByLang(acceptLanguage));
             }
         }
 
-        user.setPin(passwordEncoder.encode(request.getNewPassword()));
-        user.setStatus(UserStatus.ACTIVE.name());
-        userRepository.save(user);
-        notifyCarlandActivated(user.getId());
+        account.setStaffPassword(passwordEncoder.encode(request.getNewPassword()));
+        account.setStatus(StaffAccountStatus.ACTIVE.name());
+        staffAccountRepository.save(account);
+        notifyCarlandActivated(account.getId());
 
-        String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration, false);
+        String accessToken = jwtService.generateStaffAccessToken(
+                account.getId(), account.getPhoneNumber(), account.getRole(),
+                account.getName(), account.getSurname(), staffAccessTokenSeconds, false);
         return UserResponse.builder()
                 .accessToken(accessToken)
-                .role(user.getRole())
-                .userId(user.getId())
-                .name(user.getName())
-                .surname(user.getSurname())
-                .phoneNumber(user.getPhoneNumber())
+                .role(account.getRole())
+                .userId(account.getId())
+                .name(account.getName())
+                .surname(account.getSurname())
+                .phoneNumber(account.getPhoneNumber())
                 .mustChangePassword(false)
                 .message(EnumMessagesLangValues.SUCCESS.getMessageByLang(acceptLanguage))
                 .build();
     }
 
-    private void notifyCarlandActivated(Long userId) {
-        if (!StringUtils.hasText(internalToken)) {
-            log.warn("STAFF_ACTIVATE_SKIP userId={} reason=no_internal_token", userId);
-            return;
-        }
+    private StaffAccount saveNew(StaffAccount account, String acceptLanguage) {
         try {
-            carlandBookingFeign.activateStaff(internalToken, userId);
-        } catch (Exception ex) {
-            log.warn("STAFF_ACTIVATE_FEIGN_FAIL userId={}", userId);
+            return staffAccountRepository.save(account);
+        } catch (DataIntegrityViolationException ex) {
+            throw new UsernameAlreadyExistException(
+                    EnumMessagesLangValues.USERNAME_ALREADY_EXISTS.getMessageByLang(acceptLanguage));
         }
     }
 
-    private void auditLogin(User user, String phone, boolean success, String detail) {
+    private void notifyCarlandActivated(Long staffId) {
+        if (!StringUtils.hasText(internalToken)) {
+            log.warn("STAFF_ACTIVATE_SKIP staffId={} reason=no_internal_token", staffId);
+            return;
+        }
+        try {
+            carlandBookingFeign.activateStaff(internalToken, staffId);
+        } catch (Exception ex) {
+            log.warn("STAFF_ACTIVATE_FEIGN_FAIL staffId={}", staffId);
+        }
+    }
+
+    private void auditLogin(StaffAccount account, String phone, boolean success, String detail) {
         if (!StringUtils.hasText(internalToken)) {
             return;
         }
@@ -273,15 +276,23 @@ public class StaffAuthService {
             carlandBookingFeign.auditStaff(internalToken, StaffAuditRequest.builder()
                     .action("LOGIN")
                     .actor(phone)
-                    .userId(user == null ? null : user.getId())
+                    .userId(account == null ? null : account.getId())
                     .phoneNumber(phone)
-                    .role(user == null ? null : user.getRole())
+                    .role(account == null ? null : account.getRole())
                     .detail(detail)
                     .success(success)
                     .build());
         } catch (Exception ex) {
-            log.warn("STAFF_AUDIT_LOGIN_FAIL userId={}", user == null ? null : user.getId());
+            log.warn("STAFF_AUDIT_LOGIN_FAIL staffId={}", account == null ? null : account.getId());
         }
+    }
+
+    private static boolean isOpen(StaffAccount account) {
+        if (!isStaffRole(account.getRole())) {
+            return false;
+        }
+        return StaffAccountStatus.INVITED.name().equalsIgnoreCase(account.getStatus())
+                || StaffAccountStatus.ACTIVE.name().equalsIgnoreCase(account.getStatus());
     }
 
     private static boolean isStaffRole(String role) {

@@ -1,20 +1,18 @@
 package com.carland.carland_auth.staff;
 
-import com.carland.carland_auth.entity.Otp;
-import com.carland.carland_auth.entity.User;
+import com.carland.carland_auth.entity.StaffAccount;
+import com.carland.carland_auth.entity.StaffOtp;
 import com.carland.carland_auth.enums.OtpStatus;
-import com.carland.carland_auth.enums.UserRoles;
-import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.feign.CarlandBookingFeign;
 import com.carland.carland_auth.jwt.JWTService;
-import com.carland.carland_auth.repository.OtpRepository;
-import com.carland.carland_auth.repository.UserRepository;
-import com.carland.carland_auth.service.interfaces.RefreshTokenService;
+import com.carland.carland_auth.repository.StaffAccountRepository;
+import com.carland.carland_auth.repository.StaffOtpRepository;
 import com.carland.carland_auth.service.interfaces.SMSService;
 import com.carland.carland_auth.staff.dto.StaffPasswordForgotRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -23,8 +21,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -33,13 +34,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class StaffPasswordResetServiceTest {
 
-    @Mock UserRepository userRepository;
-    @Mock OtpRepository otpRepository;
+    @Mock StaffAccountRepository staffAccountRepository;
+    @Mock StaffOtpRepository staffOtpRepository;
+    @Mock StaffOtpHasher staffOtpHasher;
     @Mock SMSService smsService;
     @Mock StaffMailSender staffMailSender;
     @Mock JWTService jwtService;
     @Mock BCryptPasswordEncoder passwordEncoder;
-    @Mock RefreshTokenService refreshTokenService;
     @Mock CarlandBookingFeign carlandBookingFeign;
 
     @InjectMocks StaffPasswordResetService service;
@@ -48,13 +49,14 @@ class StaffPasswordResetServiceTest {
     void exp() {
         ReflectionTestUtils.setField(service, "expirationMinutes", 3L);
         ReflectionTestUtils.setField(service, "resetTokenExpiration", 360L);
-        ReflectionTestUtils.setField(service, "accessTokenExpiration", 900L);
+        ReflectionTestUtils.setField(service, "staffAccessTokenSeconds", 18000L);
+        ReflectionTestUtils.setField(service, "maxVerifyAttempts", 3);
         ReflectionTestUtils.setField(service, "internalToken", "x");
     }
 
     @Test
     void forgotUnknownUserStillOk() {
-        when(userRepository.findByPhoneNumber("+994778844221")).thenReturn(null);
+        when(staffAccountRepository.findByPhoneNumber("+994778844221")).thenReturn(null);
         var out = service.forgot(StaffPasswordForgotRequest.builder()
                 .phoneNumber("+994778844221")
                 .channel("SMS")
@@ -65,23 +67,32 @@ class StaffPasswordResetServiceTest {
     }
 
     @Test
-    void forgotSmsSendsOtp() {
-        User user = User.builder()
-                .id(9L)
+    void forgotSmsStoresHashNotPlaintext() {
+        StaffAccount account = StaffAccount.builder()
+                .id(StaffIds.MIN_ID)
                 .phoneNumber("+994778844221")
-                .role(UserRoles.BRANCH_ADMIN.name())
-                .status(UserStatus.ACTIVE.name())
+                .role("BRANCH_ADMIN")
+                .status(StaffAccountStatus.ACTIVE.name())
                 .build();
-        when(userRepository.findByPhoneNumber("+994778844221")).thenReturn(user);
-        when(otpRepository.findAllByUserIdAndStatus(9L, OtpStatus.PENDING.name())).thenReturn(List.of());
-        when(otpRepository.save(any(Otp.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(staffAccountRepository.findByPhoneNumber("+994778844221")).thenReturn(account);
+        when(staffOtpRepository.findAllByStaffAccountIdAndStatus(StaffIds.MIN_ID, OtpStatus.PENDING.name()))
+                .thenReturn(List.of());
+        when(staffOtpHasher.hash(anyString())).thenReturn("hmac");
+        when(staffOtpRepository.save(any(StaffOtp.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.forgot(StaffPasswordForgotRequest.builder()
                 .phoneNumber("+994778844221")
                 .channel("SMS")
                 .build(), "az");
 
-        verify(smsService).sendSms(eq(9L), eq("az"));
+        ArgumentCaptor<String> code = ArgumentCaptor.forClass(String.class);
+        verify(staffOtpHasher).hash(code.capture());
+        ArgumentCaptor<StaffOtp> saved = ArgumentCaptor.forClass(StaffOtp.class);
+        verify(staffOtpRepository).save(saved.capture());
+        assertEquals("hmac", saved.getValue().getCodeHash());
+        assertNotEquals(code.getValue(), saved.getValue().getCodeHash());
+        verify(smsService).sendOtpToPhone(eq("+994778844221"), eq(code.getValue()), eq("az"));
+        verify(smsService, never()).sendSms(any(), any());
         verify(staffMailSender, never()).sendHtml(any(), any(), any());
     }
 

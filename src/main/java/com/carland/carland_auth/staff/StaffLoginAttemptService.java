@@ -1,7 +1,7 @@
 package com.carland.carland_auth.staff;
 
-import com.carland.carland_auth.entity.User;
-import com.carland.carland_auth.repository.UserRepository;
+import com.carland.carland_auth.entity.StaffAccount;
+import com.carland.carland_auth.repository.StaffAccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -11,8 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * Staff password lockout counters. Same User columns as PIN lockout; staff accounts do not use PIN.
- * Thresholds come from staff.login.* properties, not hardcoded.
+ * Staff password lockout. Counters live on {@code staff_accounts}, not on customer PIN columns.
  */
 @Service
 @RequiredArgsConstructor
@@ -27,61 +26,61 @@ public class StaffLoginAttemptService {
     @Value("${staff.login.lock-duration-minutes:5}")
     private int lockDurationMinutes;
 
-    private final UserRepository userRepository;
+    private final StaffAccountRepository staffAccountRepository;
 
     public record Result(boolean locked, LocalDateTime lockedUntil, long remainingSeconds) {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Result recordWrongPassword(Long userId) {
-        User user = userRepository.findById(userId).orElseThrow();
+    public Result recordWrongPassword(Long staffId) {
+        StaffAccount account = staffAccountRepository.findById(staffId).orElseThrow();
         LocalDateTime now = LocalDateTime.now();
 
-        if (user.getPinLockedUntil() != null && user.getPinLockedUntil().isAfter(now)) {
-            long remaining = Math.max(1, java.time.Duration.between(now, user.getPinLockedUntil()).getSeconds());
-            return new Result(true, user.getPinLockedUntil(), remaining);
+        if (account.getLockedUntil() != null && account.getLockedUntil().isAfter(now)) {
+            long remaining = Math.max(1, java.time.Duration.between(now, account.getLockedUntil()).getSeconds());
+            return new Result(true, account.getLockedUntil(), remaining);
         }
 
         int attempts;
-        if (user.getLastFailedPinAt() == null
-                || user.getLastFailedPinAt().isBefore(now.minusMinutes(attemptWindowMinutes))) {
+        if (account.getLastFailedAt() == null
+                || account.getLastFailedAt().isBefore(now.minusMinutes(attemptWindowMinutes))) {
             attempts = 1;
         } else {
-            int current = user.getFailedPinAttempts() == null ? 0 : user.getFailedPinAttempts();
+            int current = account.getFailedAttempts() == null ? 0 : account.getFailedAttempts();
             attempts = current + 1;
         }
 
-        user.setFailedPinAttempts(attempts);
-        user.setLastFailedPinAt(now);
+        account.setFailedAttempts(attempts);
+        account.setLastFailedAt(now);
 
         if (attempts >= maxAttempts) {
             LocalDateTime until = now.plusMinutes(lockDurationMinutes);
-            user.setPinLockedUntil(until);
-            user.setFailedPinAttempts(0);
-            userRepository.save(user);
+            account.setLockedUntil(until);
+            account.setFailedAttempts(0);
+            staffAccountRepository.save(account);
             long remaining = Math.max(1, java.time.Duration.between(now, until).getSeconds());
             return new Result(true, until, remaining);
         }
 
-        userRepository.save(user);
+        staffAccountRepository.save(account);
         return new Result(false, null, 0);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void clearFailureState(Long userId) {
-        User user = userRepository.findById(userId).orElseThrow();
-        user.setFailedPinAttempts(0);
-        user.setLastFailedPinAt(null);
-        user.setPinLockedUntil(null);
-        userRepository.save(user);
+    public void clearFailureState(Long staffId) {
+        StaffAccount account = staffAccountRepository.findById(staffId).orElseThrow();
+        account.setFailedAttempts(0);
+        account.setLastFailedAt(null);
+        account.setLockedUntil(null);
+        staffAccountRepository.save(account);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void clearExpiredLock(Long userId) {
-        User user = userRepository.findById(userId).orElseThrow();
-        if (user.getPinLockedUntil() != null && !user.getPinLockedUntil().isAfter(LocalDateTime.now())) {
-            user.setPinLockedUntil(null);
-            userRepository.save(user);
+    public void clearExpiredLock(Long staffId) {
+        StaffAccount account = staffAccountRepository.findById(staffId).orElseThrow();
+        if (account.getLockedUntil() != null && !account.getLockedUntil().isAfter(LocalDateTime.now())) {
+            account.setLockedUntil(null);
+            staffAccountRepository.save(account);
         }
     }
 }

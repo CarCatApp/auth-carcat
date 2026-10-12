@@ -84,5 +84,11 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd /root
-            docker-compose --env-file /root/carland.env pull auth-service
-            docker-compose --env-file /root/carland.env up -d --no-deps auth-service
+            ref=$(docker inspect --format '{{.Config.Image}}' auth-service)
+            docker pull "$ref"
+            docker-compose --env-file /root/carland.env up -d --force-recreate --no-deps auth-service
+            running=$(docker inspect --format '{{.Image}}' auth-service)
+            want=$(docker image inspect --format '{{.Id}}' "$ref")
+            started=$(docker inspect --format '{{.State.StartedAt}}' auth-service)
+            echo "ref=$ref running=$running want=$want started=$started"
+            test "$running" = "$want"

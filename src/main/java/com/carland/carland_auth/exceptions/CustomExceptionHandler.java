@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.io.IOException;
+import java.net.UnknownHostException;
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 
@@ -209,25 +210,51 @@ private final ObjectMapper objectMapper;
         String error = "Unexpected error";
         String message = "Bilinməyən daxili xəta";
 
-        try {
-            JsonNode jsonNode = objectMapper.readTree(feignError);
-            if (jsonNode.has("error") || jsonNode.has("message")) {
-                error = jsonNode.get("error").asText();
-                message = jsonNode.get("message").asText();
+        if (feignError != null && !feignError.isBlank()) {
+            try {
+                JsonNode jsonNode = objectMapper.readTree(feignError);
+                if (jsonNode.hasNonNull("error")) {
+                    error = jsonNode.get("error").asText();
+                }
+                if (jsonNode.hasNonNull("message")) {
+                    message = jsonNode.get("message").asText();
+                }
+            } catch (IOException e) {
+                log.error("IO  error message : {}", e.getMessage());
             }
-        } catch (IOException e) {
-            log.error("IO  error message : {}", e.getMessage());
+        }
+
+        int status = ex.status();
+        HttpStatus httpStatus = HttpStatus.resolve(status);
+        if (httpStatus == null) {
+            httpStatus = HttpStatus.BAD_GATEWAY;
+            Throwable cause = rootCause(ex);
+            if (cause instanceof UnknownHostException) {
+                error = "SMS_DNS";
+                message = "SMS xidmətinə qoşulmaq mümkün olmadı";
+                log.error("FEIGN_DNS_FAIL host={}", cause.getMessage());
+            } else {
+                log.error("FEIGN_FAIL status={} cause={}", status, cause.getClass().getSimpleName());
+            }
+        } else {
+            log.error("error message is : {} ", message);
         }
 
         ResponseException responseException = ResponseException.builder()
                 .error(error)
                 .message(message)
                 .timeStamp(LocalDateTime.now())
-                .status(ex.status())
+                .status(httpStatus.value())
                 .build();
+        return new ResponseEntity<>(responseException, httpStatus);
+    }
 
-        log.error("error message is : {} ", responseException.getMessage());
-        return new ResponseEntity<>(responseException, HttpStatus.valueOf(ex.status()));
+    private static Throwable rootCause(Throwable ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
 

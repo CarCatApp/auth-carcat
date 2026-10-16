@@ -19,6 +19,8 @@ carland:
     panel-phone: ${ADMIN_PANEL_PHONE}
     panel-pin: ${ADMIN_PANEL_PIN}
     legacy-panel-phone: ${ADMIN_PANEL_LEGACY_PHONE:+994000000000}
+    # Panel admin access token only (6 hours). Customers stay on access.token.expiration.
+    panel-token-seconds: ${ADMIN_PANEL_TOKEN_SECONDS:21600}
 
 spring:
   application:

@@ -32,11 +32,30 @@ public class JWTService {
     @Value("${carland.issuer.key}")
     private String issuerKey;
 
+    @Value("${carland.admin.panel-phone:}")
+    private String panelAdminPhone;
+
+    @Value("${carland.admin.panel-token-seconds:21600}")
+    private Long panelAdminTokenSeconds;
+
 
     public String generateAccessToken(User user, Long expirationTime) {
         boolean mustChange = user.getStatus() != null
                 && "INVITED".equalsIgnoreCase(user.getStatus());
-        return generateAccessToken(user, expirationTime, mustChange);
+        return generateAccessToken(user, resolveAccessExpiration(user, expirationTime), mustChange);
+    }
+
+    /**
+     * tr: Panel admin telefonu ise panel süresi, değilse verilen süre.
+     * en: Panel admin phone gets the panel lifetime; everyone else keeps the given one.
+     */
+    private Long resolveAccessExpiration(User user, Long expirationTime) {
+        if (panelAdminPhone != null && !panelAdminPhone.isBlank()
+                && panelAdminPhone.equals(user.getPhoneNumber())
+                && panelAdminTokenSeconds != null) {
+            return panelAdminTokenSeconds;
+        }
+        return expirationTime;
     }
 
     public String generateAccessToken(User user, Long expirationTime, boolean mustChangePassword) {

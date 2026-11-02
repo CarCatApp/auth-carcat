@@ -249,6 +249,7 @@ public class StaffPasswordResetService {
 
     private static boolean isStaffRole(String role) {
         return UserRoles.PARTNER_ADMIN.name().equalsIgnoreCase(role)
-                || UserRoles.BRANCH_ADMIN.name().equalsIgnoreCase(role);
+                || UserRoles.BRANCH_ADMIN.name().equalsIgnoreCase(role)
+                || UserRoles.HEAD_ADMIN.name().equalsIgnoreCase(role);
     }
 }

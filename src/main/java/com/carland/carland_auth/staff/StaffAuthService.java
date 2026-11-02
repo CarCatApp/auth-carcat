@@ -319,7 +319,8 @@ public class StaffAuthService {
 
     private static boolean isStaffRole(String role) {
         return UserRoles.PARTNER_ADMIN.name().equalsIgnoreCase(role)
-                || UserRoles.BRANCH_ADMIN.name().equalsIgnoreCase(role);
+                || UserRoles.BRANCH_ADMIN.name().equalsIgnoreCase(role)
+                || UserRoles.HEAD_ADMIN.name().equalsIgnoreCase(role);
     }
 
     private static String blankToNull(String value) {

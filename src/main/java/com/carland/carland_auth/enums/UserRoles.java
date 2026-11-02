@@ -8,5 +8,6 @@ public enum UserRoles {
     USER,
     BOSS,
     PARTNER_ADMIN,
-    BRANCH_ADMIN;
+    BRANCH_ADMIN,
+    HEAD_ADMIN;
 }

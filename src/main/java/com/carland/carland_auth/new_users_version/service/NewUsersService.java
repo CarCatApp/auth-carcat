@@ -10,6 +10,7 @@ import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.AuthApiException;
 import com.carland.carland_auth.exceptions.PinLockedException;
 import com.carland.carland_auth.jwt.JWTService;
+import com.carland.carland_auth.messaging.CustomerEnsurePublisher;
 import com.carland.carland_auth.new_users_version.dto.AuthFlowResponse;
 import com.carland.carland_auth.new_users_version.dto.NewOtpRequest;
 import com.carland.carland_auth.new_users_version.dto.PinSetResponse;
@@ -20,6 +21,7 @@ import com.carland.carland_auth.service.OtpVerifyAttemptService;
 import com.carland.carland_auth.service.PinAttemptService;
 import com.carland.carland_auth.service.interfaces.RefreshTokenService;
 import com.carland.carland_auth.service.interfaces.SMSService;
+import com.carland.carland_auth.util.AfterCommit;
 import com.carland.carland_auth.util.HashUtil;
 import com.carland.carland_auth.util.PinValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -87,6 +89,7 @@ public class NewUsersService {
     private final OtpVerifyAttemptService otpVerifyAttemptService;
     private final OtpSendLockService otpSendLockService;
     private final AuthEndpointRateLimiter authEndpointRateLimiter;
+    private final CustomerEnsurePublisher customerEnsurePublisher;
 
     @Transactional
     public AuthFlowResponse auth(UserRequest request, HttpServletRequest httpRequest, String acceptLanguage) {
@@ -338,6 +341,11 @@ public class NewUsersService {
         }
 
         consumeAuthToken(pinSetupToken);
+        final Long ensureUserId = user.getId();
+        final String ensurePhone = user.getPhoneNumber();
+        final String ensureRole = user.getRole();
+        AfterCommit.run(() -> customerEnsurePublisher.publishForAppUser(
+                ensureUserId, ensurePhone, ensureRole, acceptLanguage));
         return PinSetResponse.builder().status("PIN_SET").build();
     }
 
@@ -395,6 +403,13 @@ public class NewUsersService {
         refreshToken.setUser(user);
         user.getRefreshTokens().add(refreshToken);
         userRepository.save(user);
+
+        // Heal orphans (ACTIVE auth user, missing customers row) without waiting for add-details.
+        final Long ensureUserId = user.getId();
+        final String ensurePhone = user.getPhoneNumber();
+        final String ensureRole = user.getRole();
+        AfterCommit.run(() -> customerEnsurePublisher.publishForAppUser(
+                ensureUserId, ensurePhone, ensureRole, acceptLanguage));
 
         return UserResponse.builder()
                 .accessToken(accessToken)

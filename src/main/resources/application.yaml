@@ -15,6 +15,9 @@ carland:
     key: "carland"
   api:
     url: "http://carland-service:9091"
+  customer-ensure:
+    exchange: ${CUSTOMER_ENSURE_EXCHANGE:customer.ensure}
+    routing-key: ${CUSTOMER_ENSURE_ROUTING_KEY:ensure}
   admin:
     panel-phone: ${ADMIN_PANEL_PHONE}
     panel-pin: ${ADMIN_PANEL_PIN}
@@ -25,6 +28,12 @@ carland:
 spring:
   application:
     name: carland_auth
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    connection-timeout: ${RABBITMQ_CONNECTION_TIMEOUT_MS:5000}
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/authdatabase}
     username: ${SPRING_DATASOURCE_USERNAME:username}

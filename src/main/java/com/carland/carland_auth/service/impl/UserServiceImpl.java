@@ -7,15 +7,18 @@ import com.carland.carland_auth.dto.response.UserResponse;
 import com.carland.carland_auth.entity.RefreshToken;
 import com.carland.carland_auth.entity.User;
 import com.carland.carland_auth.enums.EnumMessagesLangValues;
+import com.carland.carland_auth.feign.CarlandFeign;
 import com.carland.carland_auth.enums.UserStatus;
 import com.carland.carland_auth.exceptions.*;
 import com.carland.carland_auth.jwt.JWTService;
+import com.carland.carland_auth.messaging.CustomerEnsurePublisher;
 import com.carland.carland_auth.repository.RefreshTokenRepository;
 import com.carland.carland_auth.repository.UserRepository;
 import com.carland.carland_auth.service.PinAttemptService;
 import com.carland.carland_auth.service.interfaces.OtpService;
 import com.carland.carland_auth.service.interfaces.RefreshTokenService;
 import com.carland.carland_auth.service.interfaces.UserService;
+import com.carland.carland_auth.util.AfterCommit;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +49,11 @@ public class UserServiceImpl implements UserService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final OtpService otpService;
     private final PinAttemptService pinAttemptService;
+    private final CarlandFeign carlandFeign;
+    private final CustomerEnsurePublisher customerEnsurePublisher;
+
+    @Value("${carland.internal-token:}")
+    private String internalToken;
 
     @Transactional
     @Override
@@ -233,6 +241,9 @@ public class UserServiceImpl implements UserService {
         user.setPin(passwordEncoder.encode(credential));
         user.setStatus(UserStatus.ACTIVE.name());
 
+        AfterCommit.run(() -> customerEnsurePublisher.publishForAppUser(
+                user.getId(), user.getPhoneNumber(), user.getRole(), acceptLanguage));
+
         return UserResponse.builder()
                 .message(EnumMessagesLangValues.PASSWORD_SET_SUCCESS.getMessageByLang(acceptLanguage))
                 .role(user.getRole())
@@ -269,9 +280,26 @@ public class UserServiceImpl implements UserService {
 
         user.setStatus(UserStatus.DELETED.name());
         userRepository.save(user);
+        anonymizeClientEvents(userId);
         return UserResponse.builder()
                 .message(EnumMessagesLangValues.USER_SUCCESSFULLY_DELETED.getMessageByLang(acceptLanguage))
                 .build();
+    }
+
+    /**
+     * tr: Hesab silindikdən sonra crash sətirlərində userId boşalır. Servis əlçatan deyilsə silmə dayanmır.
+     * en: After the account is deleted, crash rows lose userId. A service failure does not block deletion.
+     */
+    private void anonymizeClientEvents(Long userId) {
+        if (internalToken == null || internalToken.isBlank()) {
+            log.error("client-events anonymize skipped, internal token empty, userId={}", userId);
+            return;
+        }
+        try {
+            carlandFeign.anonymizeClientEvents(internalToken, userId);
+        } catch (RuntimeException ex) {
+            log.error("client-events anonymize failed userId={} type={}", userId, ex.getClass().getSimpleName());
+        }
     }
 
 }

@@ -258,6 +258,11 @@ public enum EnumMessagesLangValues {
             "Telefon nömrəsi düzgün deyil",
             "Phone number is invalid",
             "Номер телефона некорректен"
+    ),
+    PIN_LOGIN_REQUIRED(
+            "Bu hesabda artıq PIN var. PIN ilə daxil olun və ya PIN-i unutmusunuzsa «PIN unutdum» (RESET) seçin.",
+            "This account already has a PIN. Sign in with your PIN, or use Forgot PIN (RESET) to change it.",
+            "У этого аккаунта уже есть PIN. Войдите с PIN или выберите «Забыли PIN» (RESET), чтобы сменить его."
     );
 
 

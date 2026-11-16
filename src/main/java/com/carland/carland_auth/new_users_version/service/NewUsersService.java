@@ -16,6 +16,7 @@ import com.carland.carland_auth.new_users_version.dto.NewOtpRequest;
 import com.carland.carland_auth.new_users_version.dto.PinSetResponse;
 import com.carland.carland_auth.repository.*;
 import com.carland.carland_auth.service.AuthEndpointRateLimiter;
+import com.carland.carland_auth.service.AuthFlowLogService;
 import com.carland.carland_auth.service.OtpSendLockService;
 import com.carland.carland_auth.service.OtpVerifyAttemptService;
 import com.carland.carland_auth.service.PinAttemptService;
@@ -90,6 +91,7 @@ public class NewUsersService {
     private final OtpSendLockService otpSendLockService;
     private final AuthEndpointRateLimiter authEndpointRateLimiter;
     private final CustomerEnsurePublisher customerEnsurePublisher;
+    private final AuthFlowLogService authFlowLogService;
 
     @Transactional
     public AuthFlowResponse auth(UserRequest request, HttpServletRequest httpRequest, String acceptLanguage) {
@@ -115,6 +117,9 @@ public class NewUsersService {
         if (PURPOSE_RESET.equals(requestedPurpose) && pinCheckEligible) {
             syncUserStatusForNext(user, phone, NEXT_SEND_OTP);
             String token = jwtService.generatePhoneAuthToken(phone, PURPOSE_RESET, authTokenExpiration);
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "AUTH_DECISION",
+                    user.getId(), phone, null, PURPOSE_RESET, 200, null, null,
+                    "next=" + NEXT_SEND_OTP + " pinCheckEligible=true requestedPurpose=RESET status=" + user.getStatus());
             return AuthFlowResponse.builder()
                     .authToken(token)
                     .next(NEXT_SEND_OTP)
@@ -126,6 +131,9 @@ public class NewUsersService {
         if (pinCheckEligible) {
             // ACTIVE + PIN — leave status ACTIVE; next unchanged
             String token = jwtService.generatePhoneAuthToken(phone, PURPOSE_REGISTER, authTokenExpiration);
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "AUTH_DECISION",
+                    user.getId(), phone, null, PURPOSE_REGISTER, 200, null, null,
+                    "next=" + NEXT_PIN_CHECK + " pinCheckEligible=true hasPin=true status=" + user.getStatus());
             return AuthFlowResponse.builder()
                     .authToken(token)
                     .next(NEXT_PIN_CHECK)
@@ -135,8 +143,16 @@ public class NewUsersService {
         }
 
         // SEND_OTP path: create user if missing; status → OTP_PENDING (incl. DELETED / restart)
+        String priorStatus = user == null ? "null" : user.getStatus();
         syncUserStatusForNext(user, phone, NEXT_SEND_OTP);
         String token = jwtService.generatePhoneAuthToken(phone, PURPOSE_REGISTER, authTokenExpiration);
+        User afterSync = userRepository.findByPhoneNumber(phone);
+        authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "AUTH_DECISION",
+                afterSync == null ? null : afterSync.getId(), phone, null, PURPOSE_REGISTER, 200, null, null,
+                "next=" + NEXT_SEND_OTP + " pinCheckEligible=false hasPin=" + hasPin
+                        + " active=" + active + " deleted=" + deleted
+                        + " statusBefore=" + priorStatus
+                        + " statusAfter=" + (afterSync == null ? "null" : afterSync.getStatus()));
         return AuthFlowResponse.builder()
                 .authToken(token)
                 .next(NEXT_SEND_OTP)
@@ -163,9 +179,41 @@ public class NewUsersService {
                         .build());
                 return;
             }
+            // Re-onboard after DELETE: drop old PIN so REGISTER setPin is first-PIN, not "hadPin" gray zone.
+            if (UserStatus.DELETED.name().equalsIgnoreCase(user.getStatus())) {
+                user.setPinHash(null);
+                user.setPin(null);
+            }
             user.setStatus(UserStatus.OTP_PENDING.name());
             userRepository.save(user);
         }
+    }
+
+    /**
+     * Hard rail: ACTIVE + PIN users must use PIN login or purpose=RESET (forgot PIN).
+     * REGISTER OTP/setPin for them was accepted before and caused mass session revoke / logout.
+     */
+    private void assertRegisterPathAllowedForUser(User user, String purpose, String phone, String step,
+                                                  String acceptLanguage) {
+        if (!PURPOSE_REGISTER.equals(purpose)) {
+            return;
+        }
+        if (user == null) {
+            return;
+        }
+        boolean active = UserStatus.ACTIVE.name().equalsIgnoreCase(user.getStatus());
+        boolean hasPin = user.getPinHash() != null && !user.getPinHash().isBlank();
+        if (!(active && hasPin)) {
+            return;
+        }
+        authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "PATH_REJECTED",
+                user.getId(), phone, null, purpose, 409, "PIN_LOGIN_REQUIRED",
+                "ACTIVE user with PIN cannot use REGISTER OTP/setPin",
+                "step=" + step + " use PIN login or /auth purpose=RESET");
+        throw new AuthApiException(
+                "PIN_LOGIN_REQUIRED",
+                EnumMessagesLangValues.PIN_LOGIN_REQUIRED.getMessageByLang(acceptLanguage),
+                HttpStatus.CONFLICT);
     }
 
     @Transactional
@@ -176,8 +224,12 @@ public class NewUsersService {
 
         String phone = jwtService.extractPhoneFromAuthToken(authToken);
         String purposeRaw = jwtService.extractAndLogPurposeFromAuthToken(authToken);
+        String purpose = stripStage(purposeRaw);
         String ip = resolveClientIp(httpRequest);
         LocalDateTime now = LocalDateTime.now();
+
+        User gateUser = userRepository.findByPhoneNumber(phone);
+        assertRegisterPathAllowedForUser(gateUser, purpose, phone, "otp/createAndSend", acceptLanguage);
 
         enforceSendLimits(phone, ip, now, acceptLanguage);
 
@@ -207,7 +259,7 @@ public class NewUsersService {
         return AuthFlowResponse.builder()
                 .authToken(authToken)
                 .next(NEXT_VERIFY_OTP)
-                .purpose(stripStage(purposeRaw))
+                .purpose(purpose)
                 .message(EnumMessagesLangValues.OTP_SENT.getMessageByLang(acceptLanguage))
                 .build();
     }
@@ -230,6 +282,10 @@ public class NewUsersService {
         String purposeRaw = jwtService.extractAndLogPurposeFromAuthToken(authToken);
         String purpose = stripStage(purposeRaw);
         LocalDateTime now = LocalDateTime.now();
+
+        // Belt: block ACTIVE+PIN REGISTER even if SMS was somehow already requested.
+        assertRegisterPathAllowedForUser(
+                userRepository.findByPhoneNumber(phone), purpose, phone, "otp/verify", acceptLanguage);
 
         OtpRateLimit rate = otpRateLimitRepository.findByPhoneNumber(phone).orElse(null);
         if (rate != null && rate.getVerifyLockedUntil() != null && rate.getVerifyLockedUntil().isAfter(now)) {
@@ -327,7 +383,9 @@ public class NewUsersService {
             throw new AuthApiException("INVALID_TOKEN", "Your session expired. Please start again.", HttpStatus.UNAUTHORIZED);
         }
 
-        boolean hadPin = user.getPinHash() != null && !user.getPinHash().isBlank();
+        // Hard rail is on createAndSend/verify (ACTIVE+PIN + REGISTER).
+        // Here status is usually OTP_VERIFIED after verify — do not block recovery setPin.
+
         user.setPinHash(argon2PasswordEncoder.encode(pinCode));
         user.setStatus(UserStatus.ACTIVE.name());
         user.setFailedPinAttempts(0);
@@ -336,8 +394,26 @@ public class NewUsersService {
         // Must flush before revoke: @Modifying clearAutomatically would otherwise drop unflushed pin_hash
         userRepository.saveAndFlush(user);
 
-        if (PURPOSE_RESET.equals(purpose) || hadPin) {
-            refreshTokenRepository.revokeAllExceptDevice(user.getId(), request.getDeviceId(), LocalDateTime.now());
+        // Only forgot-PIN (RESET) may kill other devices. REGISTER / re-setPin must not.
+        // keepDeviceId required — null previously revoked EVERY session (same-phone logout).
+        if (PURPOSE_RESET.equals(purpose)) {
+            String keepDeviceId = request.getDeviceId();
+            if (keepDeviceId != null && !keepDeviceId.isBlank()) {
+                int revoked = refreshTokenRepository.revokeAllExceptDevice(
+                        user.getId(), keepDeviceId, LocalDateTime.now());
+                authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REVOKE_OTHERS",
+                        user.getId(), phone, keepDeviceId, purpose, 200, null, null,
+                        "setPin RESET revokeAllExceptDevice count=" + revoked);
+            } else {
+                log.warn("setPin RESET without deviceId; skip session revoke userId={}", user.getId());
+                authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REVOKE_SKIP",
+                        user.getId(), phone, null, purpose, 200, null, null,
+                        "setPin RESET without deviceId — sessions kept");
+            }
+        } else {
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REVOKE_SKIP",
+                    user.getId(), phone, request.getDeviceId(), purpose, 200, null, null,
+                    "setPin purpose=" + purpose + " — no session revoke");
         }
 
         consumeAuthToken(pinSetupToken);
@@ -398,11 +474,19 @@ public class NewUsersService {
         pinAttemptService.clearFailureState(user.getId());
 
         String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration);
+        // Rotate only this device; other phones keep their sessions.
+        int rotated = refreshTokenRepository.revokeByUserIdAndDeviceId(
+                user.getId(), request.getDeviceId(), LocalDateTime.now());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(
                 user, request.getDeviceId(), request.getPlatform());
         refreshToken.setUser(user);
         user.getRefreshTokens().add(refreshToken);
         userRepository.save(user);
+
+        authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "LOGIN_ROTATE",
+                user.getId(), phone, request.getDeviceId(), null, 200, null, null,
+                "revokedSameDevice=" + rotated + " newRefreshId=" + refreshToken.getId()
+                        + " platform=" + request.getPlatform());
 
         // Heal orphans (ACTIVE auth user, missing customers row) without waiting for add-details.
         final Long ensureUserId = user.getId();

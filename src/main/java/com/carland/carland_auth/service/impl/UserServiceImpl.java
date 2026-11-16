@@ -14,6 +14,7 @@ import com.carland.carland_auth.jwt.JWTService;
 import com.carland.carland_auth.messaging.CustomerEnsurePublisher;
 import com.carland.carland_auth.repository.RefreshTokenRepository;
 import com.carland.carland_auth.repository.UserRepository;
+import com.carland.carland_auth.service.AuthFlowLogService;
 import com.carland.carland_auth.service.PinAttemptService;
 import com.carland.carland_auth.service.interfaces.OtpService;
 import com.carland.carland_auth.service.interfaces.RefreshTokenService;
@@ -47,6 +48,7 @@ public class UserServiceImpl implements UserService {
     private final JWTService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final AuthFlowLogService authFlowLogService;
     private final OtpService otpService;
     private final PinAttemptService pinAttemptService;
     private final CarlandFeign carlandFeign;
@@ -155,14 +157,24 @@ public class UserServiceImpl implements UserService {
 
         String accessTokenJWT = jwtService.generateAccessToken(user, ACCESS_TOKEN_EXPIRATION);
 
+        String deviceId = request.getDeviceId();
+        int rotated = 0;
+        if (deviceId != null && !deviceId.isBlank()) {
+            rotated = refreshTokenRepository.revokeByUserIdAndDeviceId(user.getId(), deviceId, LocalDateTime.now());
+        }
+
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(
-                user, request.getDeviceId(), request.getPlatform());
+                user, deviceId, request.getPlatform());
 
         List<RefreshToken> refreshTokenList = user.getRefreshTokens();
         refreshTokenList.add(refreshToken);
 
         refreshToken.setUser(user);
         userRepository.save(user);
+
+        authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "LOGIN_ROTATE",
+                user.getId(), user.getPhoneNumber(), deviceId, null, 200, null, null,
+                "legacyLogin revokedSameDevice=" + rotated + " newRefreshId=" + refreshToken.getId());
 
         return UserResponse.builder()
                 .accessToken(accessTokenJWT)
@@ -181,36 +193,57 @@ public class UserServiceImpl implements UserService {
 
         if (userId == null) {
             log.info("missing  field error ");
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REFRESH_REJECT",
+                    null, null, null, null, 400, "MISSING_USER_ID", "userId null", "refresh missing userId");
             throw new MissingFieldException(EnumMessagesLangValues.MISSING_USER_ID.getMessageByLang(acceptLanguage));
         }
         User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE.name());
         if (user == null) {
             log.info("user not found error");
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REFRESH_REJECT",
+                    userId, null, null, null, 404, "USER_NOT_FOUND", "user not ACTIVE",
+                    "refresh userId not found or not ACTIVE");
             throw new UserNotFoundException(EnumMessagesLangValues.USER_NOT_FOUND.getMessageByLang(acceptLanguage));
-        }
-
-        RefreshToken refreshTokenEntity = refreshTokenRepository.findTopByUserIdAndRevokedAtIsNullOrderByCreatedAtDesc(userId);
-        if (refreshTokenEntity == null) {
-            refreshTokenEntity = refreshTokenRepository.findTopByUserIdOrderByCreatedAtDesc(userId);
-        }
-
-        log.info("refresh token from repository : {}", refreshTokenEntity);
-
-        if (refreshTokenEntity == null || refreshTokenEntity.getRevokedAt() != null) {
-            throw new RefreshTokenNotSetException(EnumMessagesLangValues.REFRESH_TOKEN_NOT_FOUND
-                    .getMessageByLang(acceptLanguage));
         }
 
         String raw = refreshToken != null && refreshToken.startsWith("Bearer ")
                 ? refreshToken.substring(7)
                 : refreshToken;
-        if (!refreshTokenEntity.getToken().equals(raw)) {
+        if (raw == null || raw.isBlank()) {
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REFRESH_REJECT",
+                    userId, user.getPhoneNumber(), null, null, 401, "REFRESH_TOKEN_NOT_FOUND",
+                    "blank token", "refresh Authorization blank");
+            throw new RefreshTokenNotSetException(EnumMessagesLangValues.REFRESH_TOKEN_NOT_FOUND
+                    .getMessageByLang(acceptLanguage));
+        }
+
+        // Accept any active token for this user (multi-device); latest-only caused same-phone logout.
+        RefreshToken refreshTokenEntity =
+                refreshTokenRepository.findByUserIdAndTokenAndRevokedAtIsNull(userId, raw);
+        if (refreshTokenEntity == null) {
+            RefreshToken any = refreshTokenRepository.findByUserIdAndToken(userId, raw);
+            String reason;
+            if (any == null) {
+                reason = "token_unknown_for_user";
+            } else if (any.getRevokedAt() != null) {
+                reason = "token_revoked_at=" + any.getRevokedAt() + " deviceId=" + any.getDeviceId();
+            } else {
+                reason = "token_row_unusable";
+            }
+            log.info("refresh rejected userId={} reason={}", userId, reason);
+            authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REFRESH_REJECT",
+                    userId, user.getPhoneNumber(),
+                    any == null ? null : any.getDeviceId(),
+                    null, 401, "REFRESH_TOKEN_NOT_FOUND", reason, reason);
             throw new RefreshTokenNotSetException(EnumMessagesLangValues.REFRESH_TOKEN_NOT_FOUND
                     .getMessageByLang(acceptLanguage));
         }
 
         String accessTokenJWT = jwtService.generateAccessToken(user, ACCESS_TOKEN_EXPIRATION);
 
+        authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "REFRESH_OK",
+                userId, user.getPhoneNumber(), refreshTokenEntity.getDeviceId(), null, 200, null, null,
+                "refreshId=" + refreshTokenEntity.getId() + " createdAt=" + refreshTokenEntity.getCreatedAt());
 
         return UserResponse.builder()
                 .refreshToken(refreshTokenEntity.getToken())

@@ -94,7 +94,9 @@ C) Forgot PIN
    Notes:
    - If phone has no usable PIN / no account, server treats RESET like REGISTER
      (no 404). next will still be SEND_OTP.
-   - Successful RESET setPinCode revokes other devices' refresh sessions.
+   - Successful RESET setPinCode revokes OTHER devices only when body includes deviceId
+    (same device kept). Without deviceId, backend skips revoke (no mass logout).
+  - REGISTER setPinCode never revokes sessions.
 
 D) Abandoned signup (OTP verified earlier, left before setPin)
    - User status OTP_VERIFIED, no pin_hash (or not ACTIVE)
@@ -177,6 +179,8 @@ Errors:
   401 AUTH_TOKEN_EXPIRED   → restart from phone (/auth)
   401 INVALID_TOKEN        → restart from phone
   429 LOGIN_LOCKED         → show countdown (cooldown / phone / IP)
+  409 PIN_LOGIN_REQUIRED   → account is ACTIVE with PIN; do NOT OTP.
+                               Show PIN login, or Forgot PIN → /auth { purpose:"RESET" }
 
 
 ========== 3.3 POST /api/v1/newUsers/otp/verify ==========
@@ -214,6 +218,7 @@ Errors:
   400 OTP_EXPIRED          → stay on OTP; call createAndSend again
   429 OTP_VERIFY_LOCKED    → 3 wrong attempts; countdown ~5 minutes
   401 AUTH_TOKEN_EXPIRED / INVALID_TOKEN → back to /auth
+  409 PIN_LOGIN_REQUIRED   → same as createAndSend (ACTIVE+PIN cannot REGISTER-verify)
 
 
 ========== 3.4 PUT /api/v1/newUsers/setPinCode ==========
@@ -229,7 +234,8 @@ Headers:
 Body:
 {
   "pinSetupToken": "<from /otp/verify>",
-  "pinCode": "2580"
+  "pinCode": "2580",
+  "deviceId": "<same FCM/deviceToken as login — required on RESET to drop other devices>"
 }
 
 PIN rules:
@@ -345,6 +351,9 @@ Named errors you must handle:
   PIN_LENGTH_ERROR       400
   PIN_INCORRECT          401   → PIN login screen
   PIN_NOT_SET            401   → send user through OTP/setPin flow
+  PIN_LOGIN_REQUIRED     409   → ACTIVE+PIN tried REGISTER OTP/verify.
+                                  → PinLoginScreen OR Forgot PIN (/auth purpose=RESET).
+                                  Do NOT clear session / do NOT stay on OTP.
   LOGIN_LOCKED           429   → countdown (login lock OR createAndSend limits
                                   OR /auth rate limit)
 
@@ -380,6 +389,8 @@ No body required.
 
 Success: UserResponse with new accessToken + refreshToken (same shape as login).
 On failure (401): clear session → send user to /auth or login screen.
+Do NOT clear session on PIN_INCORRECT / OTP_INCORRECT / unrelated API 401s.
+Refresh accepts any active token for the user (multi-device), not only the latest.
 
 
 --------------------------------------------------------------------------------

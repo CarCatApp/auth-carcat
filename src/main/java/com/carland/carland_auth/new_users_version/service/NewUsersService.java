@@ -475,13 +475,13 @@ public class NewUsersService {
 
         String accessToken = jwtService.generateAccessToken(user, accessTokenExpiration);
         // Rotate only this device; other phones keep their sessions.
+        // @Modifying clearAutomatically clears the persistence context — do not touch lazy refreshTokens after.
         int rotated = refreshTokenRepository.revokeByUserIdAndDeviceId(
                 user.getId(), request.getDeviceId(), LocalDateTime.now());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(
                 user, request.getDeviceId(), request.getPlatform());
         refreshToken.setUser(user);
-        user.getRefreshTokens().add(refreshToken);
-        userRepository.save(user);
+        refreshToken = refreshTokenRepository.save(refreshToken);
 
         authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "LOGIN_ROTATE",
                 user.getId(), phone, request.getDeviceId(), null, 200, null, null,

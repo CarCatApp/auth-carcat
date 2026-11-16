@@ -29,7 +29,6 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -160,17 +159,14 @@ public class UserServiceImpl implements UserService {
         String deviceId = request.getDeviceId();
         int rotated = 0;
         if (deviceId != null && !deviceId.isBlank()) {
+            // clearAutomatically — avoid lazy user.refreshTokens after this.
             rotated = refreshTokenRepository.revokeByUserIdAndDeviceId(user.getId(), deviceId, LocalDateTime.now());
         }
 
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(
                 user, deviceId, request.getPlatform());
-
-        List<RefreshToken> refreshTokenList = user.getRefreshTokens();
-        refreshTokenList.add(refreshToken);
-
         refreshToken.setUser(user);
-        userRepository.save(user);
+        refreshToken = refreshTokenRepository.save(refreshToken);
 
         authFlowLogService.recordStep(authFlowLogService.traceIdOrNull(), "LOGIN_ROTATE",
                 user.getId(), user.getPhoneNumber(), deviceId, null, 200, null, null,
